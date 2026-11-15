@@ -12,12 +12,12 @@
 | テストプログラム | テスト関数数 | アサーション結果 | 対象 |
 |---|---|---|---|
 || test_kanji | 101 | 9375 成功 / 0 失敗 | 文字エンコーディング変換・文字幅判定 (SJIS/EUC-JP/JIS/UTF-8, ロケール対応 kana_is_wide) |
-|| test_kgetc_esc | 6 | 13 成功 / 0 失敗 | kgetc 入力状態機械 (ESC/SI/SO: Meta 前置の ESC が KS_JIS を確定させず Ctrl-N/Ctrl-O を飲み込まない) |
+|| test_kgetc_esc | — | 13 成功 / 0 失敗 | kgetc 入力状態機械 (ESC/SI/SO: Meta 前置の ESC が KS_JIS を確定させず Ctrl-N/Ctrl-O を飲み込まない) |
 || test_search | 18 | 37 成功 / 0 失敗 | 検索エンジン (scanner/amatch/mceq/eq) |
 || test_line | 12 | 65 成功 / 0 失敗 | バッファ行操作 (linsert/ldelete/lnewline) |
 ||| test_undo | 13 | 73 成功 / 0 失敗 | undo/redo システム (INSERT/DELETE/NEWLINE/JOIN) |
 ||| test_eval | 9 | 45 成功 / 0 失敗 | 式評価器ヘルパー (stoi/itoaa/gettyp/stol/ltos) |
-||| test_python | 21 | 50 成功 / 0 失敗 | Python インデント (pyinsert/pyindent/py_backspace/py_indent_region) |
+||| test_python | 24 | 50 成功 / 0 失敗 | Python インデント (pyinsert/pyindent/py_backspace/py_indent_region) |
 || test_cmode | 35 | 49 成功 / 0 失敗 | CMODE インデント (cinsert/cindent/cindent_region/c_mode) |
 || test_mdmode | 79 | 119 成功 / 0 失敗 | Markdown モード (mdinsert/mdindent/md_backspace/md_tab/見出し/リスト/強調/リンク/引用/フェンス/表/アウトライン/conceal/自動ペア/プレビュー) |
 ||| test_vtputc_overflow | — | 35 成功 / 0 失敗 | 画面描画・行あふれ('$')マーカー (80列, kana narrow/wide) |
@@ -26,9 +26,9 @@
 ||| test_screen_no_overflow | — | 61 成功 / 0 失敗 | 画面描画オーバーフローなし (80列境界) |
 || test_tcap | 12 | 15 成功 / 0 失敗 | 端末制御 (tcap / terminfo) |
 || test_spawn | 9 | 21 成功 / 0 失敗 | 外部コマンド起動 (spawn) / プレビュー出力取り込み |
-|| test_fileio | 5 | 17 成功 / 0 失敗 | ファイル入出力 (kfopen/kfgetc/kfputc/kfclose) |
+|| test_fileio | 7 | 28 成功 / 0 失敗 | ファイル入出力 (kfopen/kfgetc/kfputc/kfclose) |
 || test_memory_safety | — | 14671 成功 / 0 失敗 | バッファオーバーフロー・メモリリーク検証 (ASan + UBSan, line.c/undo.c) |
-|||| test_batch | 16 | 55 成功 / 0 失敗 | バッチモード統合 (kemacs -x 起動・ファイルI/O・行番号設定・Python 変数) |
+|||| test_batch | 20 | 55 成功 / 0 失敗 | バッチモード統合 (kemacs -x 起動・ファイルI/O・行番号設定・Python 変数) |
 
 > **合計: 18のテストプログラム / 24,839 アセーション群 — 全テスト合格 (exit code 0)**
 
