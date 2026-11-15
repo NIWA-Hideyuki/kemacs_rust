@@ -14,6 +14,7 @@ make all
 echo ""
 echo "=== Running unit tests ==="
 ./test_kanji
+./test_kgetc_esc
 ./test_search
 ./test_line
 ./test_eval

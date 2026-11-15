@@ -31,6 +31,14 @@ ELDFLAGS = -Wl,--gc-sections
 test_kanji: test_kanji.c test.h ../kanji/kanji.h ../kanji/wcwidth.c ../kanji/wcwidth.h ../kanji/stoj.c ../kanji/jtos.c ../kanji/kgetc.c ../kanji/kputc.c
 	$(CC) $(CFLAGS) test_kanji.c -o test_kanji
 
+# --- test_kgetc_esc ---
+# Regression guard for the kgetc() ESC/SI/SO state machine: a bare ESC
+# (Meta prefix) must not commit KS_JIS, or a following Ctrl-N/Ctrl-O
+# (SI/SO) is swallowed as a JIS locking-shift escape.  Includes kgetc.c
+# and kputc.c directly; links nothing (no kemacs runtime symbols needed).
+test_kgetc_esc: test_kgetc_esc.c test.h ../kanji/kanji.h ../kanji/kgetc.c ../kanji/kputc.c ../kanji/wcwidth.c ../kanji/wcwidth.h ../kanji/stoj.c ../kanji/jtos.c
+	$(CC) $(CFLAGS) test_kgetc_esc.c -o test_kgetc_esc
+
 # --- test_search ---
 test_search: test_search.c test.h $(CSSO) $(CSTR_A)
 	$(CC) $(CFLAGS) test_search.c $(CSSO) $(CSTR_A) -o test_search
@@ -119,10 +127,10 @@ test_memory_safety: test_memory_safety.c test.h $(CSSO)  \
 	$(CC) $(CFLAGS) $(SANFLAGS) test_memory_safety.c $(CSSO) \
 		$(SANLDFLAGS) -o test_memory_safety
 
-all: test_kanji test_search test_line test_eval test_undo test_python test_cmode test_mdmode test_batch test_vtputc_overflow test_modeline_gutter test_display_gutter test_screen_no_overflow test_memory_safety test_tcap test_spawn test_fileio
+all: test_kanji test_kgetc_esc test_search test_line test_eval test_undo test_python test_cmode test_mdmode test_batch test_vtputc_overflow test_modeline_gutter test_display_gutter test_screen_no_overflow test_memory_safety test_tcap test_spawn test_fileio
 
 run: all
-	@for t in test_kanji test_search test_line test_eval test_undo test_python test_cmode test_mdmode test_vtputc_overflow test_modeline_gutter test_display_gutter test_screen_no_overflow test_tcap test_spawn test_fileio; do \
+	@for t in test_kanji test_kgetc_esc test_search test_line test_eval test_undo test_python test_cmode test_mdmode test_vtputc_overflow test_modeline_gutter test_display_gutter test_screen_no_overflow test_tcap test_spawn test_fileio; do \
 		echo "=== Running $$t ==="; \
 		./$$t || exit 1; \
 	done
@@ -149,4 +157,4 @@ test_fileio: test_fileio.c ../kanji.o ../Css.o $(CSTR_A) $(KANJI_A)
 
 
 clean:
-	rm -f test_kanji test_search test_line test_eval test_batch eval_gc.o  test_line_dbg  test_search_dbg test_vtputc_overflow test_display_gutter test_modeline_gutter test_python test_cmode test_mdmode test_screen_no_overflow test_memory_safety test_undo test_tcap test_spawn test_fileio
+	rm -f test_kanji test_kgetc_esc test_search test_line test_eval test_batch eval_gc.o  test_line_dbg  test_search_dbg test_vtputc_overflow test_display_gutter test_modeline_gutter test_python test_cmode test_mdmode test_screen_no_overflow test_memory_safety test_undo test_tcap test_spawn test_fileio

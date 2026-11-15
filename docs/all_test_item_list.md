@@ -12,6 +12,7 @@
 | テストプログラム | テスト関数数 | アサーション結果 | 対象 |
 |---|---|---|---|
 || test_kanji | 101 | 9375 成功 / 0 失敗 | 文字エンコーディング変換・文字幅判定 (SJIS/EUC-JP/JIS/UTF-8, ロケール対応 kana_is_wide) |
+|| test_kgetc_esc | 6 | 13 成功 / 0 失敗 | kgetc 入力状態機械 (ESC/SI/SO: Meta 前置の ESC が KS_JIS を確定させず Ctrl-N/Ctrl-O を飲み込まない) |
 || test_search | 18 | 37 成功 / 0 失敗 | 検索エンジン (scanner/amatch/mceq/eq) |
 || test_line | 12 | 65 成功 / 0 失敗 | バッファ行操作 (linsert/ldelete/lnewline) |
 ||| test_undo | 13 | 73 成功 / 0 失敗 | undo/redo システム (INSERT/DELETE/NEWLINE/JOIN) |
@@ -29,7 +30,7 @@
 || test_memory_safety | — | 14671 成功 / 0 失敗 | バッファオーバーフロー・メモリリーク検証 (ASan + UBSan, line.c/undo.c) |
 |||| test_batch | 16 | 55 成功 / 0 失敗 | バッチモード統合 (kemacs -x 起動・ファイルI/O・行番号設定・Python 変数) |
 
-> **合計: 17のテストプログラム / 24,815 アセーション群 — 全テスト合格 (exit code 0)**
+> **合計: 18のテストプログラム / 24,839 アセーション群 — 全テスト合格 (exit code 0)**
 
 ---
 
