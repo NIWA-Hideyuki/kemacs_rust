@@ -132,7 +132,7 @@ utf8_to_internal(char *p, int n1)
     tmpn = sizeof(tmpb);
     n = n1;
 
-    if (-1 != iconv(conv_cd, &p, &n, &tmpi, &tmpn)) {
+    if ((size_t)-1 != iconv(conv_cd, &p, &n, &tmpi, &tmpn)) {
       /* EUC-JP conversion succeeded */
       if (!(tmpb[0] & 0x80)) {
         cc = tmpb[0] & 0x7f;
@@ -170,14 +170,14 @@ utf8_to_internal(char *p, int n1)
     size_t u32n = sizeof(u32buf);
     char *pin = p;
     size_t inlen = n1;
-    if (-1 != iconv(conv_cd_u32, &pin, &inlen, &u32i, &u32n)) {
+    if ((size_t)-1 != iconv(conv_cd_u32, &pin, &inlen, &u32i, &u32n)) {
       /* UTF-32LE output: 4 bytes per codepoint */
       cc = (int)((unsigned char)u32buf[0] | ((unsigned char)u32buf[1] << 8) |
                  ((unsigned char)u32buf[2] << 16) | ((unsigned char)u32buf[3] << 24));
       /* Non-BMP (>= 0x10000) are Unicode already.  BMP codepoints (< 0x10000)
          here have no EUC-JP representation (e.g. U+2764, U+FE0F), so store
          them directly, tagged so iskanji() won't mistake them for JIS kanji. */
-      return (cc < 0x10000) ? (cc | UNICODE_MARK) : cc;
+      return (cc < 0x10000) ? (int)(cc | UNICODE_MARK) : cc;
     }
     /* iconv failed - fall through to manual decoder */
   }
@@ -259,7 +259,7 @@ kdetermine(char *p, int n)
 #endif /* HANDLE_UTF */
     switch(sjis_rest){
     case 0:
-      if(!(c & 0x80) || 0xa0 <= c && c <= 0xdf) ;
+      if(!(c & 0x80) || (0xa0 <= c && c <= 0xdf)) ;
       else if(0x81 <= c && c <= 0xfc) sjis_rest = 1;
       else impossible(sjis_rest);
       break;
@@ -273,7 +273,7 @@ kdetermine(char *p, int n)
     switch(ujis_rest){
     case 0:
       if(!(c & 0x80)) ;
-      else if(0xa1 <= c && c <= 0xfe || c == SSHFT2) ujis_rest = 1;
+      else if((0xa1 <= c && c <= 0xfe) || c == SSHFT2) ujis_rest = 1;
       else if(c == SSHFT3) ujis_rest = 2;
        /* ... but actually kemacs doesn't support Hojo-kanji */
       else impossible(ujis_rest);
@@ -384,10 +384,10 @@ kgetc(KSTREAM * kp)
       kp->ks_gstate &= ~CR_STATE;
 
        /* Reset escaping status */
-      if (kp->ks_gstate & KST_STATE == KST_EOF /* Add Nide */ ||
-	  KS_INTERP(kp->ks_flag) == KS_KANJI &&
-	  (KS_CODE(kp->ks_flag) == KS_JIS ||
-	   (kp->ks_gstate & ESC_STATE) != NON_ESC)) {
+      if (((kp->ks_gstate & KST_STATE) == KST_EOF) /* Add Nide */ ||
+	  (KS_INTERP(kp->ks_flag) == KS_KANJI &&
+	   (KS_CODE(kp->ks_flag) == KS_JIS ||
+	    (kp->ks_gstate & ESC_STATE) != NON_ESC))) {
 	sweep_esc(kp);
       }
       continue;
@@ -668,7 +668,7 @@ kgetc(KSTREAM * kp)
 		KS_INTERP(kp->ks_flag) = KS_KANJI;
 	      }
 	    } else {
-	      if (n <= (sizeof(kp->ks_queue) - kp->ks_ql * sizeof(int)) &&
+	      if ((size_t)n <= (sizeof(kp->ks_queue) - kp->ks_ql * sizeof(int)) &&
 		  !(kp->ks_gstate & KST_STATE)) {
 		 /* Enough area rest in kp->ks_queue, and we have not already
 		    have buffered bytes */
@@ -686,7 +686,7 @@ kgetc(KSTREAM * kp)
 	    n--, p++;
 	  }
 
-	  if ((0xa1 <= cc && cc <= 0xfe || cc == SSHFT2) &&
+	  if (((0xa1 <= cc && cc <= 0xfe) || cc == SSHFT2) &&
 	      (KS_CODE(kp->ks_flag) == KS_UJIS ||
 	       (KS_INTERP(kp->ks_flag) == KS_UKANJI &&
 	  KS_CODE(kp->ks_flag) != KS_UTF8))) {

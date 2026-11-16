@@ -47,8 +47,8 @@ eucjp_to_utf8_fallback(char *q, int n1, char **out)
 {
     while (n1--) {
         if (*q & 0x80) {
-            *(*out)++ = (*q >> 6) & 0x3 | 0xc0;
-            *(*out)++ = *q++ & 0x3f | 0x80;
+            *(*out)++ = ((*q >> 6) & 0x3) | 0xc0;
+            *(*out)++ = (*q++ & 0x3f) | 0x80;
         } else
             *(*out)++ = *q++;
     }
@@ -70,7 +70,7 @@ ujis_to_utf8(char *q, int n1, char **pp)
 	}
 
 	if (!conv_wcd_failed && conv_wcd != (iconv_t)(-1) && conv_wcd != NULL) {
-		if (-1 != iconv(conv_wcd, &q, &n, pp, &l)) {
+		if ((size_t)-1 != iconv(conv_wcd, &q, &n, pp, &l)) {
 			return 1; /* *pp proceeded */
 		}
 		/* iconv failed (e.g. q doesn't correspond to existing ujis kanji) */
