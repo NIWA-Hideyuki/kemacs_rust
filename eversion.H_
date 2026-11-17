@@ -52,6 +52,20 @@
  *   cases (these functions return their pointer argument, which pointed to
  *   the stack-local arg1[NSTRING]).
  * - Removed -liconv from build (glibc has iconv built-in).
+ * - Guarded eval.c gtfun() UFDIV/UFMOD/UFRND against a zero divisor and
+ *   against INT_MIN / -1: a macro line such as "set %r &div 10 0" used to
+ *   raise SIGFPE (integer divide error) and kill the editor.  The three
+ *   functions now return the errorm literal, and test_batch covers them.
+ * - Guarded eval.c gtfun() UFNEG/UFABS/UFRND against INT_MIN: -INT_MIN and
+ *   |INT_MIN| are not representable, so the negation/abs was undefined.
+ *   They now return the errorm literal like the division cases.
+ * - Guarded eval.c gtfun() UFADD/UFSUB/UFTIMES against signed overflow
+ *   (via new static int_add_ovf/int_sub_ovf/int_mul_ovf helpers): an
+ *   overflowing expression used to wrap silently.  They now return the
+ *   errorm literal.
+ * - Fixed eval.c itoaa() and abs() for INT_MIN: both negated it (undefined
+ *   behaviour) and itoaa() printed garbage for it.  Magnitudes are now built
+ *   with unsigned arithmetic, so "&add -2147483648 0" prints -2147483648.
  *
  * Revision 4.11  1993/06/08  06:51:58  sanewo
  * patch #11

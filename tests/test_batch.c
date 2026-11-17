@@ -1047,6 +1047,290 @@ static void test_py_format_region_batch(void)
     cleanup_rc_dir(rcdir);
 }
 
+/*
+ * ===== &div / &mod / &rnd zero-divisor tests =====
+ *
+ * gtfun() evaluated &div/&mod/&rnd with no zero check, so a macro line
+ * such as "set %r &div 10 0" raised SIGFPE (integer divide error) and
+ * killed the editor.  The functions must now return the ERROR literal
+ * and leave the editor running.
+ */
+
+/* Run a .kemacsrc that sets %r to EXPR, writes "r=<value> END" to
+ * OUTFILE, and exits.  Returns the file contents (caller frees), or
+ * NULL when kemacs died or wrote nothing. */
+static char *run_macro_expr(const char *expr, const char *outfile)
+{
+    char script[2048];
+    char *rcdir;
+    char *argv[] = { kemacs_bin, NULL };
+    char *out;
+
+    snprintf(script, sizeof(script),
+             "set %%r %s\n"
+             "insert-string \"r=\"\n"
+             "insert-string %%r\n"
+             "insert-string \" END~n\"\n"
+             "write-file %s\n"
+             "quick-exit\n",
+             expr, outfile);
+
+    rcdir = make_kemacsrc_env(script);
+    TEST_ASSERT(rcdir != NULL, "temp rc dir created for macro expression test");
+    if (rcdir == NULL)
+        return NULL;
+
+    unlink(outfile);
+    out = run_kemacs_with_home_capture(argv, rcdir);
+    if (out) free(out);          /* stdout is not the result channel */
+    cleanup_rc_dir(rcdir);
+
+    return read_file(outfile);
+}
+
+static void test_eval_div_by_zero(void)
+{
+    const char *f = "/tmp/kemacs_eval_div0.txt";
+    char *c = run_macro_expr("&div 10 0", f);
+
+    if (c != NULL) {
+        TEST_ASSERT(strstr(c, "r=ERROR") != NULL,
+                    "&div 10 0 returns ERROR instead of SIGFPE");
+        free(c);
+    } else {
+        TEST_ASSERT(0, "&div 10 0: kemacs produced no result (crashed?)");
+    }
+    unlink(f);
+}
+
+static void test_eval_mod_by_zero(void)
+{
+    const char *f = "/tmp/kemacs_eval_mod0.txt";
+    char *c = run_macro_expr("&mod 10 0", f);
+
+    if (c != NULL) {
+        TEST_ASSERT(strstr(c, "r=ERROR") != NULL,
+                    "&mod 10 0 returns ERROR instead of SIGFPE");
+        free(c);
+    } else {
+        TEST_ASSERT(0, "&mod 10 0: kemacs produced no result (crashed?)");
+    }
+    unlink(f);
+}
+
+static void test_eval_rnd_zero(void)
+{
+    const char *f = "/tmp/kemacs_eval_rnd0.txt";
+    char *c = run_macro_expr("&rnd 0", f);
+
+    if (c != NULL) {
+        TEST_ASSERT(strstr(c, "r=ERROR") != NULL,
+                    "&rnd 0 returns ERROR instead of SIGFPE");
+        free(c);
+    } else {
+        TEST_ASSERT(0, "&rnd 0: kemacs produced no result (crashed?)");
+    }
+    unlink(f);
+}
+
+static void test_eval_div_normal(void)
+{
+    /* Sanity: the zero guards must not change ordinary results. */
+    const char *f = "/tmp/kemacs_eval_div_ok.txt";
+    char *c = run_macro_expr("&div 10 3", f);
+
+    if (c != NULL) {
+        TEST_ASSERT(strstr(c, "r=3") != NULL,
+                    "&div 10 3 still evaluates to 3");
+        free(c);
+    } else {
+        TEST_ASSERT(0, "&div 10 3: kemacs produced no result");
+    }
+    unlink(f);
+}
+
+/* -INT_MIN and |INT_MIN| are not representable in an int: gtfun() must
+ * return ERROR instead of relying on undefined negation/abs(). */
+static void test_eval_neg_int_min(void)
+{
+    const char *f = "/tmp/kemacs_eval_negmin.txt";
+    char *c = run_macro_expr("&neg -2147483648", f);
+
+    if (c != NULL) {
+        TEST_ASSERT(strstr(c, "r=ERROR") != NULL,
+                    "&neg INT_MIN returns ERROR (undefined negation)");
+        free(c);
+    } else {
+        TEST_ASSERT(0, "&neg INT_MIN: kemacs produced no result");
+    }
+    unlink(f);
+}
+
+static void test_eval_abs_int_min(void)
+{
+    const char *f = "/tmp/kemacs_eval_absmin.txt";
+    char *c = run_macro_expr("&abs -2147483648", f);
+
+    if (c != NULL) {
+        TEST_ASSERT(strstr(c, "r=ERROR") != NULL,
+                    "&abs INT_MIN returns ERROR (undefined abs)");
+        free(c);
+    } else {
+        TEST_ASSERT(0, "&abs INT_MIN: kemacs produced no result");
+    }
+    unlink(f);
+}
+
+static void test_eval_rnd_int_min(void)
+{
+    /* abs(INT_MIN) feeds ernd()'s modulus, so it is guarded too. */
+    const char *f = "/tmp/kemacs_eval_rndmin.txt";
+    char *c = run_macro_expr("&rnd -2147483648", f);
+
+    if (c != NULL) {
+        TEST_ASSERT(strstr(c, "r=ERROR") != NULL,
+                    "&rnd INT_MIN returns ERROR (undefined abs)");
+        free(c);
+    } else {
+        TEST_ASSERT(0, "&rnd INT_MIN: kemacs produced no result");
+    }
+    unlink(f);
+}
+
+static void test_eval_abs_neg_normal(void)
+{
+    /* Sanity: the INT_MIN guards must not change ordinary results. */
+    const char *f = "/tmp/kemacs_eval_abs_ok.txt";
+    char *c = run_macro_expr("&abs -5", f);
+
+    if (c != NULL) {
+        TEST_ASSERT(strstr(c, "r=5") != NULL,
+                    "&abs -5 still evaluates to 5");
+        free(c);
+    } else {
+        TEST_ASSERT(0, "&abs -5: kemacs produced no result");
+    }
+    unlink(f);
+}
+
+/* ===== &add / &sub / &tim signed overflow =====
+ *
+ * gtfun() used to evaluate a + b / a - b / a * b straight in int, so an
+ * overflowing expression silently produced a wrapped (and therefore
+ * meaningless) value.  The operations now return ERROR when the result
+ * does not fit in an int.
+ */
+
+static void test_eval_add_overflow(void)
+{
+    const char *f = "/tmp/kemacs_eval_add_ovf.txt";
+    char *c = run_macro_expr("&add 2147483647 1", f);
+
+    if (c != NULL) {
+        TEST_ASSERT(strstr(c, "r=ERROR") != NULL,
+                    "&add INT_MAX 1 returns ERROR (overflow)");
+        free(c);
+    } else {
+        TEST_ASSERT(0, "&add overflow: kemacs produced no result");
+    }
+    unlink(f);
+}
+
+static void test_eval_sub_overflow(void)
+{
+    const char *f = "/tmp/kemacs_eval_sub_ovf.txt";
+    char *c = run_macro_expr("&sub -2147483648 1", f);
+
+    if (c != NULL) {
+        TEST_ASSERT(strstr(c, "r=ERROR") != NULL,
+                    "&sub INT_MIN 1 returns ERROR (overflow)");
+        free(c);
+    } else {
+        TEST_ASSERT(0, "&sub overflow: kemacs produced no result");
+    }
+    unlink(f);
+}
+
+static void test_eval_tim_overflow(void)
+{
+    const char *f = "/tmp/kemacs_eval_tim_ovf.txt";
+    char *c = run_macro_expr("&tim 2147483647 2", f);
+
+    if (c != NULL) {
+        TEST_ASSERT(strstr(c, "r=ERROR") != NULL,
+                    "&tim INT_MAX 2 returns ERROR (overflow)");
+        free(c);
+    } else {
+        TEST_ASSERT(0, "&tim overflow: kemacs produced no result");
+    }
+    unlink(f);
+}
+
+static void test_eval_tim_neg_int_min(void)
+{
+    /* -INT_MIN * -1 overflows too, and must not be reported as 0. */
+    const char *f = "/tmp/kemacs_eval_tim_min.txt";
+    char *c = run_macro_expr("&tim -2147483648 -1", f);
+
+    if (c != NULL) {
+        TEST_ASSERT(strstr(c, "r=ERROR") != NULL,
+                    "&tim INT_MIN -1 returns ERROR (overflow)");
+        free(c);
+    } else {
+        TEST_ASSERT(0, "&tim INT_MIN -1: kemacs produced no result");
+    }
+    unlink(f);
+}
+
+static void test_eval_int_min_roundtrip(void)
+{
+    /* INT_MIN itself is representable, so a non-overflowing expression
+       must still print it.  itoaa() used to negate it and emit garbage. */
+    const char *f = "/tmp/kemacs_eval_min_rt.txt";
+    char *c = run_macro_expr("&add -2147483648 0", f);
+
+    if (c != NULL) {
+        TEST_ASSERT(strstr(c, "r=-2147483648") != NULL,
+                    "itoaa(INT_MIN) prints -2147483648");
+        free(c);
+    } else {
+        TEST_ASSERT(0, "&add INT_MIN 0: kemacs produced no result");
+    }
+    unlink(f);
+}
+
+static void test_eval_add_sub_tim_normal(void)
+{
+    /* Sanity: the overflow guards must not change ordinary results. */
+    const char *f = "/tmp/kemacs_eval_arith_ok.txt";
+    char *c;
+
+    c = run_macro_expr("&add 2 3", f);
+    if (c != NULL) {
+        TEST_ASSERT(strstr(c, "r=5") != NULL, "&add 2 3 still evaluates to 5");
+        free(c);
+    } else {
+        TEST_ASSERT(0, "&add 2 3: kemacs produced no result");
+    }
+
+    c = run_macro_expr("&sub 2 3", f);
+    if (c != NULL) {
+        TEST_ASSERT(strstr(c, "r=-1") != NULL, "&sub 2 3 still evaluates to -1");
+        free(c);
+    } else {
+        TEST_ASSERT(0, "&sub 2 3: kemacs produced no result");
+    }
+
+    c = run_macro_expr("&tim 2 3", f);
+    if (c != NULL) {
+        TEST_ASSERT(strstr(c, "r=6") != NULL, "&tim 2 3 still evaluates to 6");
+        free(c);
+    } else {
+        TEST_ASSERT(0, "&tim 2 3: kemacs produced no result");
+    }
+    unlink(f);
+}
+
 TEST_LIST({
     {"kemacs binary exists",                   test_kemacs_exists},
     {"batch quit (clean)",                     test_batch_quit_clean},
@@ -1068,6 +1352,20 @@ TEST_LIST({
     {"py-mode command: manual enable on .txt file",  test_py_mode_command_manual},
     {"py-indent via -xpy-indent on .txt file",         test_py_mode_py_indent_batch},
     {"py-format-region via -xpy-format-region on .py", test_py_format_region_batch},
+    {"eval &div by zero -> ERROR (no SIGFPE)",  test_eval_div_by_zero},
+    {"eval &mod by zero -> ERROR (no SIGFPE)",  test_eval_mod_by_zero},
+    {"eval &rnd 0 -> ERROR (no SIGFPE)",        test_eval_rnd_zero},
+    {"eval &div 10 3 still -> 3",              test_eval_div_normal},
+    {"eval &neg INT_MIN -> ERROR (no UB)",     test_eval_neg_int_min},
+    {"eval &abs INT_MIN -> ERROR (no UB)",     test_eval_abs_int_min},
+    {"eval &rnd INT_MIN -> ERROR (no UB)",     test_eval_rnd_int_min},
+    {"eval &abs -5 still -> 5",                test_eval_abs_neg_normal},
+    {"eval &add INT_MAX 1 -> ERROR (overflow)", test_eval_add_overflow},
+    {"eval &sub INT_MIN 1 -> ERROR (overflow)", test_eval_sub_overflow},
+    {"eval &tim INT_MAX 2 -> ERROR (overflow)", test_eval_tim_overflow},
+    {"eval &tim INT_MIN -1 -> ERROR (overflow)", test_eval_tim_neg_int_min},
+    {"eval &add INT_MIN 0 -> -2147483648",      test_eval_int_min_roundtrip},
+    {"eval &add/&sub/&tim ordinary values",     test_eval_add_sub_tim_normal},
 })
 
 int main(void)

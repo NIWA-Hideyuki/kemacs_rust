@@ -4,7 +4,7 @@
 
 最終更新: kemacs UTF-8 ブランチ — ロケール対応ひらがな/カタカナ幅 (kana_is_wide)
 
-`make test` は `tests/` ディレクトリのサブ Makefile を呼び出し、以下の**17のテストプログラム**をビルドして順次実行する。
+`make test` は `tests/` ディレクトリのサブ Makefile を呼び出し、以下の**18のテストプログラム**をビルドして順次実行する。
 各プログラムは `test.h` フレームワークの `TEST_ASSERT*` マクロでアサーションを評価する。
 
 ## 実行結果サマリー
@@ -28,9 +28,9 @@
 || test_spawn | 9 | 21 成功 / 0 失敗 | 外部コマンド起動 (spawn) / プレビュー出力取り込み |
 || test_fileio | 7 | 28 成功 / 0 失敗 | ファイル入出力 (kfopen/kfgetc/kfputc/kfclose) |
 || test_memory_safety | — | 14671 成功 / 0 失敗 | バッファオーバーフロー・メモリリーク検証 (ASan + UBSan, line.c/undo.c) |
-|||| test_batch | 20 | 55 成功 / 0 失敗 | バッチモード統合 (kemacs -x 起動・ファイルI/O・行番号設定・Python 変数) |
+|||| test_batch | 34 | 87 成功 / 0 失敗 | バッチモード統合 (kemacs -x 起動・ファイルI/O・行番号設定・Python 変数・式評価器 &div/&mod/&rnd/&neg/&abs/&add/&sub/&tim) |
 
-> **合計: 18のテストプログラム / 24,839 アセーション群 — 全テスト合格 (exit code 0)**
+> **合計: 18のテストプログラム / 24,871 アセーション群 — 全テスト合格 (exit code 0)**
 
 ---
 
@@ -379,7 +379,25 @@ stdin は `/dev/null` にリダイレクトしてイベントループのハン�
 | 13 | py $py-indent-width settable via .kemacsrc | `set $py-indent-width 2` が .kemacsrc で読み込まれる |
 | 14 | py $py-use-spaces settable via .kemacsrc | `set $py-use-spaces FALSE` が .kemacsrc で読み込まれる |
 || 15 | py $py-indent-width / $py-use-spaces defaults | デフォルト値 (py-indent-width=4, py-use-spaces=TRUE) |
-|| 16 | py-format-region via -xpy-format-region | else: の後の行を4スペースインデント (バッチ統合) |
+|| 16 | py automode: .py file activates PYMODE | .py ファイルで PYMODE が自動有効になる |
+|| 17 | py automode: .txt file does NOT activate PYMODE | .txt ファイルでは PYMODE は自動有効にならない |
+|| 18 | py-mode command: manual enable on .txt file | `py-mode` で手動有効 |
+|| 19 | py-indent via -xpy-indent on .txt file | `py-indent` で else: 後の行を4スペースインデント |
+|| 20 | py-format-region via -xpy-format-region | `py-format-region` で領域全体を再インデント |
+|| 21 | eval &div by zero -> ERROR (no SIGFPE) | `set %r &div 10 0` が SIGFPE で落ちず ERROR を返す |
+|| 22 | eval &mod by zero -> ERROR (no SIGFPE) | `set %r &mod 10 0` が SIGFPE で落ちず ERROR を返す |
+|| 23 | eval &rnd 0 -> ERROR (no SIGFPE) | `set %r &rnd 0` が SIGFPE で落ちず ERROR を返す |
+|| 24 | eval &div 10 3 still -> 3 | ゼロガードが通常の除算結果を変えない |
+|| 25 | eval &neg INT_MIN -> ERROR (no UB) | `set %r &neg -2147483648` が未定義の符号反転をせず ERROR を返す |
+|| 26 | eval &abs INT_MIN -> ERROR (no UB) | `set %r &abs -2147483648` が未定義の abs をせず ERROR を返す |
+|| 27 | eval &rnd INT_MIN -> ERROR (no UB) | `set %r &rnd -2147483648` が abs(INT_MIN) を通さず ERROR を返す |
+|| 28 | eval &abs -5 still -> 5 | INT_MIN ガードが通常の abs 結果を変えない |
+|| 29 | eval &add INT_MAX 1 -> ERROR (overflow) | `set %r &add 2147483647 1` が ERROR を返す |
+|| 30 | eval &sub INT_MIN 1 -> ERROR (overflow) | `set %r &sub -2147483648 1` が ERROR を返す |
+|| 31 | eval &tim INT_MAX 2 -> ERROR (overflow) | `set %r &tim 2147483647 2` が ERROR を返す |
+|| 32 | eval &tim INT_MIN -1 -> ERROR (overflow) | `set %r &tim -2147483648 -1` が ERROR を返す |
+|| 33 | eval &add INT_MIN 0 -> -2147483648 | itoaa(INT_MIN) がごみを出さず -2147483648 を返す |
+|| 34 | eval &add/&sub/&tim ordinary values | オーバーフローガードが 5 / -1 / 6 を変えない |
 
 ---
 
