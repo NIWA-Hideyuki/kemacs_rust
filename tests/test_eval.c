@@ -15,6 +15,7 @@
 #include "test.h"
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 /* ---- kemacs globals (for eval.o's extern references) ---- */
 #define maindef
@@ -27,6 +28,7 @@
    (stoi and gettyp are not in edef.h; declared here.) */
 extern int stoi(Char *);
 extern int gettyp(Char *);
+extern int ernd(void);
 
 /* ---- Helper: copy a C string into a Char array ---- */
 static void to_char(Char *dst, const char *src, int n)
@@ -207,6 +209,41 @@ static void test_ltos(void)
     TEST_ASSERT_INT(falsem[1], 'A', "falsem[1] = 'A'");
 }
 
+/* ---- Tests for ernd() ----
+ * The expected values are the two's-complement wraparound sequence the
+ * original `abs(seed * 1721 + 10007)` produced on real hosts.  They are
+ * hardcoded so a change to the RNG arithmetic cannot slip through: the
+ * UB fix must preserve the sequence, not merely avoid the overflow.
+ */
+static void test_ernd_small_sequence(void)
+{
+    seed = 1;
+    TEST_ASSERT_INT(ernd(), 11728, "ernd: seed 1 -> 11728");
+    TEST_ASSERT_INT(ernd(), 20193895, "ernd: second value");
+    TEST_ASSERT_INT(ernd(), 393964934, "ernd: third (wraps 32-bit)");
+    TEST_ASSERT_INT(ernd(), 591171347, "ernd: fourth value");
+    TEST_ASSERT_INT(ernd(), 501350958, "ernd: fifth value");
+}
+
+static void test_ernd_large_seed(void)
+{
+    /* A large $seed used to overflow `seed * 1721 + 10007` (undefined). */
+    seed = INT_MAX;
+    TEST_ASSERT_INT(ernd(), 2147475362, "ernd(INT_MAX) wrapped value");
+    TEST_ASSERT_INT(ernd(), 2133233449, "ernd: second value after INT_MAX");
+
+    seed = INT_MIN;
+    TEST_ASSERT_INT(ernd(), 2147473641, "ernd(INT_MIN) wrapped value");
+
+    seed = 123456789;
+    TEST_ASSERT_INT(ernd(), 2015746372, "ernd(123456789) wrapped value");
+
+    /* The &rnd macro path is ernd() % N + 1; keep its result unchanged. */
+    seed = INT_MAX;
+    TEST_ASSERT_INT(ernd() % 1000000 + 1, 475363,
+                    "&rnd 1000000 with a large $seed");
+}
+
 /* ---- Test registry ---- */
 TEST_LIST({
     {"stoi_basic",     test_stoi_basic},
@@ -218,6 +255,8 @@ TEST_LIST({
     {"gettyp_prefixes",test_gettyp_prefixes},
     {"stol",           test_stol},
     {"ltos",           test_ltos},
+    {"ernd_small_sequence", test_ernd_small_sequence},
+    {"ernd_large_seed",     test_ernd_large_seed},
 })
 
 int main(void)

@@ -16,7 +16,7 @@
 || test_search | 18 | 37 成功 / 0 失敗 | 検索エンジン (scanner/amatch/mceq/eq) |
 || test_line | 12 | 65 成功 / 0 失敗 | バッファ行操作 (linsert/ldelete/lnewline) |
 ||| test_undo | 13 | 73 成功 / 0 失敗 | undo/redo システム (INSERT/DELETE/NEWLINE/JOIN) |
-||| test_eval | 9 | 45 成功 / 0 失敗 | 式評価器ヘルパー (stoi/itoaa/gettyp/stol/ltos) |
+||| test_eval | 11 | 55 成功 / 0 失敗 | 式評価器ヘルパー (stoi/itoaa/gettyp/stol/ltos/ernd: RNG シーケンス保持) |
 ||| test_python | 24 | 50 成功 / 0 失敗 | Python インデント (pyinsert/pyindent/py_backspace/py_indent_region) |
 || test_cmode | 35 | 49 成功 / 0 失敗 | CMODE インデント (cinsert/cindent/cindent_region/c_mode) |
 || test_mdmode | 79 | 119 成功 / 0 失敗 | Markdown モード (mdinsert/mdindent/md_backspace/md_tab/見出し/リスト/強調/リンク/引用/フェンス/表/アウトライン/conceal/自動ペア/プレビュー) |
@@ -27,10 +27,10 @@
 || test_tcap | 12 | 15 成功 / 0 失敗 | 端末制御 (tcap / terminfo) |
 || test_spawn | 9 | 21 成功 / 0 失敗 | 外部コマンド起動 (spawn) / プレビュー出力取り込み |
 || test_fileio | 7 | 28 成功 / 0 失敗 | ファイル入出力 (kfopen/kfgetc/kfputc/kfclose) |
-|| test_memory_safety | — | 14671 成功 / 0 失敗 | バッファオーバーフロー・メモリリーク検証 (ASan + UBSan, line.c/undo.c) |
-|||| test_batch | 34 | 87 成功 / 0 失敗 | バッチモード統合 (kemacs -x 起動・ファイルI/O・行番号設定・Python 変数・式評価器 &div/&mod/&rnd/&neg/&abs/&add/&sub/&tim) |
+|| test_memory_safety | 15 | 14671 成功 / 0 失敗 | バッファオーバーフロー・メモリリーク検証 (ASan + UBSan, line.c/undo.c) |
+|||| test_batch | 35 | 89 成功 / 0 失敗 | バッチモード統合 (kemacs -x 起動・ファイルI/O・行番号設定・Python 変数・式評価器 &div/&mod/&rnd/&neg/&abs/&add/&sub/&tim) |
 
-> **合計: 18のテストプログラム / 24,871 アセーション群 — 全テスト合格 (exit code 0)**
+> **合計: 18のテストプログラム / 24,883 アセーション群 — 全テスト合格 (exit code 0)**
 
 ---
 
@@ -216,8 +216,10 @@ undo.C_ の undo/redo システムを検証する。INSERT, DELETE, NEWLINE, JOI
 
 ## 4. test_eval — 式評価器ヘルパーテスト
 
-eval.c のヘルパー (stoi, itoaa, gettyp, stol, ltos) を検証する。
+eval.c のヘルパー (stoi, itoaa, gettyp, stol, ltos, ernd) を検証する。
 eval.c は `-ffunction-sections` + `--gc-sections` で必要な関数のみリンクされる。
+ernd のテストは符号付きオーバーフロー修正後も RNG シーケンスが変わらないことを
+固定値で検証する (シーケンス変更は非互換なので固定値を期待値とする)。
 
 | # | テスト項目 (英) | テスト項目 (日本語) |
 |---|---|---|
@@ -230,6 +232,8 @@ eval.c は `-ffunction-sections` + `--gc-sections` で必要な関数のみリ�
 | 7 | gettyp_prefixes | gettyp: プレフィックス型判定 |
 | 8 | stol | stol: 長整数変換 |
 | 9 | ltos | ltos: 長整数→文字列 |
+| 10 | ernd_small_sequence | ernd: 32bit ラップアラウンドを含む既存シーケンスを固定値で保持 |
+| 11 | ernd_large_seed | ernd: $seed=INT_MAX/INT_MIN でも同じ値、`&rnd` の剰余結果も同一 |
 
 ---
 
@@ -391,13 +395,14 @@ stdin は `/dev/null` にリダイレクトしてイベントループのハン�
 || 25 | eval &neg INT_MIN -> ERROR (no UB) | `set %r &neg -2147483648` が未定義の符号反転をせず ERROR を返す |
 || 26 | eval &abs INT_MIN -> ERROR (no UB) | `set %r &abs -2147483648` が未定義の abs をせず ERROR を返す |
 || 27 | eval &rnd INT_MIN -> ERROR (no UB) | `set %r &rnd -2147483648` が abs(INT_MIN) を通さず ERROR を返す |
-|| 28 | eval &abs -5 still -> 5 | INT_MIN ガードが通常の abs 結果を変えない |
-|| 29 | eval &add INT_MAX 1 -> ERROR (overflow) | `set %r &add 2147483647 1` が ERROR を返す |
-|| 30 | eval &sub INT_MIN 1 -> ERROR (overflow) | `set %r &sub -2147483648 1` が ERROR を返す |
-|| 31 | eval &tim INT_MAX 2 -> ERROR (overflow) | `set %r &tim 2147483647 2` が ERROR を返す |
-|| 32 | eval &tim INT_MIN -1 -> ERROR (overflow) | `set %r &tim -2147483648 -1` が ERROR を返す |
-|| 33 | eval &add INT_MIN 0 -> -2147483648 | itoaa(INT_MIN) がごみを出さず -2147483648 を返す |
-|| 34 | eval &add/&sub/&tim ordinary values | オーバーフローガードが 5 / -1 / 6 を変えない |
+|| 28 | eval &rnd with large $seed keeps sequence | `set $seed 2147483647` 後に `&rnd 1000000` が旧シーケンスどおり 475363 を返す |
+|| 29 | eval &abs -5 still -> 5 | INT_MIN ガードが通常の abs 結果を変えない |
+|| 30 | eval &add INT_MAX 1 -> ERROR (overflow) | `set %r &add 2147483647 1` が ERROR を返す |
+|| 31 | eval &sub INT_MIN 1 -> ERROR (overflow) | `set %r &sub -2147483648 1` が ERROR を返す |
+|| 32 | eval &tim INT_MAX 2 -> ERROR (overflow) | `set %r &tim 2147483647 2` が ERROR を返す |
+|| 33 | eval &tim INT_MIN -1 -> ERROR (overflow) | `set %r &tim -2147483648 -1` が ERROR を返す |
+|| 34 | eval &add INT_MIN 0 -> -2147483648 | itoaa(INT_MIN) がごみを出さず -2147483648 を返す |
+|| 35 | eval &add/&sub/&tim ordinary values | オーバーフローガードが 5 / -1 / 6 を変えない |
 
 ---
 

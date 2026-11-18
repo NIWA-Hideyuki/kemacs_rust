@@ -66,6 +66,11 @@
  * - Fixed eval.c itoaa() and abs() for INT_MIN: both negated it (undefined
  *   behaviour) and itoaa() printed garbage for it.  Magnitudes are now built
  *   with unsigned arithmetic, so "&add -2147483648 0" prints -2147483648.
+ * - Fixed ernd()'s `seed * 1721 + 10007` signed overflow: setting $seed to
+ *   a large value and calling &rnd was undefined behaviour.  The multiply
+ *   and add now use unsigned arithmetic, so the 32-bit wraparound is
+ *   defined and the RNG sequence is byte-for-byte the same as before.
+ *   test_eval and test_batch cover the large-seed path.
  *
  * Revision 4.11  1993/06/08  06:51:58  sanewo
  * patch #11

@@ -1056,24 +1056,13 @@ static void test_py_format_region_batch(void)
  * and leave the editor running.
  */
 
-/* Run a .kemacsrc that sets %r to EXPR, writes "r=<value> END" to
- * OUTFILE, and exits.  Returns the file contents (caller frees), or
- * NULL when kemacs died or wrote nothing. */
-static char *run_macro_expr(const char *expr, const char *outfile)
+/* Run a prepared .kemacsrc script, return the output file contents
+ * (caller frees), or NULL when kemacs died or wrote nothing. */
+static char *run_macro_script(const char *script, const char *outfile)
 {
-    char script[2048];
     char *rcdir;
     char *argv[] = { kemacs_bin, NULL };
     char *out;
-
-    snprintf(script, sizeof(script),
-             "set %%r %s\n"
-             "insert-string \"r=\"\n"
-             "insert-string %%r\n"
-             "insert-string \" END~n\"\n"
-             "write-file %s\n"
-             "quick-exit\n",
-             expr, outfile);
 
     rcdir = make_kemacsrc_env(script);
     TEST_ASSERT(rcdir != NULL, "temp rc dir created for macro expression test");
@@ -1086,6 +1075,44 @@ static char *run_macro_expr(const char *expr, const char *outfile)
     cleanup_rc_dir(rcdir);
 
     return read_file(outfile);
+}
+
+/* Run a .kemacsrc that sets %r to EXPR, writes "r=<value> END" to
+ * OUTFILE, and exits.  Returns the file contents (caller frees), or
+ * NULL when kemacs died or wrote nothing. */
+static char *run_macro_expr(const char *expr, const char *outfile)
+{
+    char script[2048];
+
+    snprintf(script, sizeof(script),
+             "set %%r %s\n"
+             "insert-string \"r=\"\n"
+             "insert-string %%r\n"
+             "insert-string \" END~n\"\n"
+             "write-file %s\n"
+             "quick-exit\n",
+             expr, outfile);
+
+    return run_macro_script(script, outfile);
+}
+
+/* Same as run_macro_expr, but set $seed first.  This exercises the
+ * large-seed path through the real macro evaluator. */
+static char *run_macro_rnd_seed(int seed, int mod, const char *outfile)
+{
+    char script[2048];
+
+    snprintf(script, sizeof(script),
+             "set $seed %d\n"
+             "set %%r &rnd %d\n"
+             "insert-string \"r=\"\n"
+             "insert-string %%r\n"
+             "insert-string \" END~n\"\n"
+             "write-file %s\n"
+             "quick-exit\n",
+             seed, mod, outfile);
+
+    return run_macro_script(script, outfile);
 }
 
 static void test_eval_div_by_zero(void)
@@ -1193,6 +1220,24 @@ static void test_eval_rnd_int_min(void)
         free(c);
     } else {
         TEST_ASSERT(0, "&rnd INT_MIN: kemacs produced no result");
+    }
+    unlink(f);
+}
+
+static void test_eval_rnd_large_seed(void)
+{
+    /* Setting $seed to INT_MAX overflowed `seed * 1721 + 10007` in
+       signed arithmetic (undefined behaviour).  The wrapped value is
+       2147475362, so &rnd 1000000 -> 475363, as before the fix. */
+    const char *f = "/tmp/kemacs_eval_rndbig.txt";
+    char *c = run_macro_rnd_seed(2147483647, 1000000, f);
+
+    if (c != NULL) {
+        TEST_ASSERT(strstr(c, "r=475363") != NULL,
+                    "&rnd with large $seed keeps the legacy sequence");
+        free(c);
+    } else {
+        TEST_ASSERT(0, "&rnd with large $seed: kemacs produced no result");
     }
     unlink(f);
 }
@@ -1359,6 +1404,7 @@ TEST_LIST({
     {"eval &neg INT_MIN -> ERROR (no UB)",     test_eval_neg_int_min},
     {"eval &abs INT_MIN -> ERROR (no UB)",     test_eval_abs_int_min},
     {"eval &rnd INT_MIN -> ERROR (no UB)",     test_eval_rnd_int_min},
+    {"eval &rnd with large $seed keeps sequence", test_eval_rnd_large_seed},
     {"eval &abs -5 still -> 5",                test_eval_abs_neg_normal},
     {"eval &add INT_MAX 1 -> ERROR (overflow)", test_eval_add_overflow},
     {"eval &sub INT_MIN 1 -> ERROR (overflow)", test_eval_sub_overflow},

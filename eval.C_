@@ -1072,6 +1072,17 @@ abs(int x)
 /* returns a random integer */
 int ernd(void)
 {
-	seed = abs(seed * 1721 + 10007);
+	/* seed * 1721 + 10007 overflows a signed int as soon as $seed holds
+	   a large value (e.g. 2147483647), which is undefined behaviour.
+	   Do the multiply/add in unsigned int instead: its wraparound is
+	   defined, and on the two's-complement hosts kemacs runs on it
+	   yields the very same 32-bit bit pattern the old expression did,
+	   so the random sequence is unchanged.  Fold the sign back in with
+	   the same magnitude rule as abs() above (INT_MIN stays INT_MIN). */
+	unsigned int u = (unsigned int)seed * 1721u + 10007u;
+
+	if (u > (unsigned int)INT_MAX)
+		u = 0u - u;		/* was a negative int: take its magnitude */
+	seed = (int)u;
 	return(seed);
 }
