@@ -4,27 +4,39 @@
 *.swp
 *.swp.bak
 
-# Build artifacts (object files and binaries)
+# Object files and statically linked libraries
 *.o
-kemacs
+*.a
+
+# Generated top-level makefile (built from mf.c)
 make.file
-kpp/Cxx.c
-Cxx.c
 
-# Cstrings and kanji build outputs
-Cstrings/*.o
-kanji/kclose.o
-kanji/kfree.o
-kanji/kgetc.o
-kanji/kopen.o
-kanji/kalloc.o
-kanji/kputc.o
-kanji/jtos.o
-kanji/stoj.o
-kanji/wcwidth.o
-kanji/kanji.a
-kanji/libconv.a
+# kpp-generated C sources and headers.
+# The tracked sources are *.C_ / *.H_; only these three top-level
+# .c/.h files are hand-written and must stay visible.
+/*.c
+/*.h
+!mf.c
+!econfig.h
+!proto.h
 
-# KPP tools (built from source)
+# Generated shared-string table and ftoc output
+/Css.c
+/Cxx.c
+/Cstr.data
+
+# Generated runtime configuration (templates .kemacsrc.full / .tmpl are tracked)
+/.kemacsrc
+
+# Built kpp tools
 kpp/kpp
 kpp/ftoc
+kpp/Cxx.c
+
+# Test executables (sources test_*.c and test.h stay tracked)
+tests/test_*
+!tests/test_*.c
+!tests/test_*.h
+
+# Main binary
+kemacs
