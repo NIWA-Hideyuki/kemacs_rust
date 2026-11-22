@@ -1,6 +1,10 @@
-# kemacs 使用手引書
+# kemacs 使用手引書 (Rust 版)
 
 kemacs (Kanji MicroEmacs) は、MicroEMACS 3.8i をベースに日本語 (Kanji) 対応機能を追加したテキストエディタです。元の作者は Daniel M. Lawrence 氏で、日本語拡張は Takanori (sanewo) Saneto 氏によって行われました。
+
+このリポジトリは kemacs の **Rust 移植版**です。元の C 版は別リポジトリで管理されており、ここには C ソースも C ビルドも存在しません。Rust 版は `cargo` だけでビルド・実行・テストできます。Rust 版の実装範囲や未移植項目は [`Rust移植.md`](Rust移植.md) を参照してください。
+
+以下、特に断りのない限り Rust 版の操作を説明します。キーコードやコマンド名は C 版と同じ値・名前を再現しているため、基本的な操作方法は C 版と共通です。
 
 ---
 
@@ -29,55 +33,62 @@ kemacs (Kanji MicroEmacs) は、MicroEMACS 3.8i をベースに日本語 (Kanji)
 | `M-^F` | ESC を押してから Ctrl+F を押す |
 | `^U N` | 繰り返し回数 N を指定するプレフィックス |
 
+Rust 版のキーコード (`CTLFLG` / `META` / `CTLX` / `SPEC`) は `src/keycode.rs` に定義され、キー割当ては `src/commands.rs` の `default_bindings()` にまとめられています。
+
 ---
 
 ## 2. インストールと起動
 
 ### 2.1 ビルド
 
-```
-make
+```sh
+cargo build
 ```
 
-`make install` で指定ディレクトリにインストールできます（インストール先は `mf.c` の `PREFIX` で指定）。
+生成される実行ファイルは `target/debug/kemacs` です。リリースビルドは `cargo build --release` で作成できます。Rust 版にインストール手順はありません。ビルドしたバイナリを任意の場所へ配置して使用してください。
 
 ### 2.2 起動
 
-```
-kemacs [オプション] [@マクロファイル] [ファイル...]
+```sh
+cargo run -- [オプション] [ファイル...]
 ```
 
 | オプション | 説明 |
 |-----------|------|
-| `-v` / `-V` | 指定ファイルを **VIEW モード** (編集不可) で開く |
-| `-e` / `-E` | 指定ファイルを **EDIT モード** (編集可能) で開く |
-| `-g<行数>` | 最初のファイルを開く際に指定行にジャンプ |
-| `-s<検索語>` | 最初のファイルを開いた後に検索を実行 |
-| `-r` / `-R` | **制限モード** — コマンドラインで指定したファイル以外の操作を禁止 |
-| `-k[キー]` | 暗号化キーを指定 (CRYPT 機能) |
-| `-f{コード}` | ファイルの文字コード・EOLを指定 (`j`=JIS, `J`=JIS 8bit, `u`/`e`=UJIS, `s`=SJIS, `w`=UTF-8)。EOL: `l`=LF, `c`=CR, `d`=CRLF |
-| `-t{コード}` | 端末の文字コードを指定 (同上) |
-| `-b` | **BINARY モード**で起動 (コード変換を無効化) |
-| `-x{コマンド}` | コマンドラインからマクロコマンドを実行 |
-| `@ファイル` | 標準スタートアップファイルの代わりにマクロファイルを実行 |
+| `-h` / `--help` | 使い方を表示して終了 |
+| `--code <コード>` / `-u <コード>` / `--code=<コード>` | ファイルの文字コード・改行種別を指定 (`UTF8`, `SJIS`, `UJIS`, `JIS` 等。改行種別は `CRLF/UTF8` のように `/` で区切って指定)。**ファイル引数より前に置く**。 |
+
+`--code` を指定しない場合、文字コードは UTF-8 → SJIS → EUC-JP → JIS の順で自動判定され、改行種別 (LF / CR / CRLF) も自動判定されます。未編集のファイルは元のバイト列をそのまま保存します。
 
 **使用例:**
 
 ```sh
-kemacs myfile.c          # ファイルを開いて編集
-kemacs -v README         # 読み取り専用で開く
-kemacs -g 50 src.c       # 50行目から開く
-kemacs -s "TODO" src.c   # "TODO" を検索しながら開く
-kemacs -f UTF8/CRLF/ f.txt  # UTF-8 CRLFでファイルを開く
+cargo run -- myfile.txt                   # ファイルを開いて編集
+cargo run -- --code SJIS new.txt          # SJIS の新規ファイルとして開く
+cargo run -- --code CRLF/UTF8 f.txt       # UTF-8 + CRLF でファイルを開く
+cargo run -- -h                           # 使い方を表示
 ```
+
+**起動オプション:** C 版の主要オプションはすべて解釈します。`-v` / `-V` (VIEW モード)、`-e` / `-E` (EDIT モード)、`-b` (BINARY フラグ)、`-g<行数>` (指定行へジャンプ)、`-x<コマンド>` (起動時コマンド実行)、`-f{コード}` / `-t{コード}` (文字コード)、`-r` / `-R` (制限モードフラグ)、`@ファイル` (スタートアップマクロ)。未移植なのは `-s<検索語>` と `-k[キー]` だけで、これらは対話プロンプトを伴うため raw mode 開始前に実行できません。起動後に `^S` / `M-E` で相当する操作を行ってください。暗号化キーは `M-E` (`setcrkey`) または `M-x set-strong-key` で設定できます (13.5 節参照)。差分と理由は [`rust版とC言語版の違い.md`](rust版とC言語版の違い.md) を参照してください。
 
 ### 2.3 設定ファイル
 
 | ファイル | 説明 |
 |---------|------|
-| `~/.kemacsrc` | ユーザ個別のスタートアップマクロファイル (ホームディレクトリ) |
-| `/usr/local/lib/kemacs/.kemacsrc` | システム全体のスタートアップマクロ (ユーザファイルがない場合に使用) |
-| `emacs.hlp` | オンラインヘルプファイル (`M-?` で表示) |
+| `~/.kemacsrc` | C 版と同じく起動時に自動実行します。対話的なコマンドはマクロ中で使わないでください。 |
+| `emacs.hlp` | **未移植** — Rust 版の `M-?` はキー割当て一覧を組み込みで生成するため、外部ヘルプファイルは不要です。 |
+
+### 2.4 テスト
+
+```sh
+cargo test
+```
+
+Rust 版のテストは全 **142件** (単体テスト 74件 + 結合テスト 30件 + 差分テスト 38件) です。差分テストは元の C 版の挙動と照合するためのものです。静的解析は次のコマンドで実行します。
+
+```sh
+cargo clippy --all-targets -- -D warnings
+```
 
 ---
 
@@ -97,13 +108,16 @@ kemacs -f UTF8/CRLF/ f.txt  # UTF-8 CRLFでファイルを開く
 | `M-F` | forward-word | 1単語進む |
 | `M-<` | beginning-of-file | ファイルの先頭へ |
 | `M->` | end-of-file | ファイルの末尾へ |
-| `M-G` / `^X G` | goto-line | 指定行へジャンプ |
-| `^X N` / `M-^N`? | next-window | 次のウィンドウへ移動 |
-| `^X P` / `M-^P`? | previous-window | 前のウィンドウへ移動 |
+| `M-G` | goto-line | 指定行へジャンプ |
+| `^X O` | next-window | 次のウィンドウへ移動 |
+| `^X P` | previous-window | 前のウィンドウへ移動 |
 | `^X ^N` | move-window-down | ウィンドウを下にスクロール |
 | `^X ^P` | move-window-up | ウィンドウを上にスクロール |
+| `M-P` / `M-N` | backward-paragraph / forward-paragraph | 前の段落へ / 次の段落へ (Rust 版追加) |
 
 > 繰り返し回数を指定できます。例: `M-8 ^F` で8文字進みます。`^U` は4倍、`^U ^U` は16倍。
+
+> 行ジャンプは `M-G` です。`^X ^G` は Markdown 見出し挿入 (`md-insert-heading`) に割り当てられています。
 
 ---
 
@@ -115,7 +129,7 @@ kemacs -f UTF8/CRLF/ f.txt  # UTF-8 CRLFでファイルを開く
 |------|----------|------|
 | `文字` | (直接入力) | カーソル位置に文字を挿入 |
 | `<BS>` / `^H` / Rubout | backward-delete | カーソルの前の文字を削除 |
-| `^D` / `<DEL>` | delete-next-character | カーソルの後の文字を削除 |
+| `^D` | delete-next-character | カーソルの後の文字を削除 |
 | `M-D` | delete-next-word | 次の単語を削除 |
 | `M-<BS>` / `M-^H` / `M-Rubout` | delete-previous-word | 前の単語を削除 |
 | `^K` | kill-to-end-of-line | カーソルから行末までを削除 (キル) |
@@ -125,6 +139,8 @@ kemacs -f UTF8/CRLF/ f.txt  # UTF-8 CRLFでファイルを開く
 | `^J` | newline-and-indent | 改行 + インデント |
 | `^I` / `<Tab>` | insert-tab | タブを挿入 |
 | `^T` | transpose-characters | 前の2文字を入れ替え |
+
+自己挿入は UTF-8 の複数バイト文字に対応しています (日本語もそのまま入力できます)。Rust 版では `<DEL>` キーは backward-delete (`^H` と同じ) に割り当てられています。
 
 ### 4.2 大文字・小文字変換
 
@@ -152,6 +168,8 @@ kemacs -f UTF8/CRLF/ f.txt  # UTF-8 CRLFでファイルを開く
 3. `^W` で切り取り、`M-W` でコピー
 4. 貼り付けたい位置にカーソルを移動して `^Y`
 
+> 内部のコマンド名は `gotobol`、`killregion`、`yank` などです (C 版のコマンド名をそのまま使用)。これらの名前は `M-X` やスクリプトからも指定できます。
+
 ---
 
 ## 5. 検索と置換
@@ -174,21 +192,21 @@ kemacs -f UTF8/CRLF/ f.txt  # UTF-8 CRLFでファイルを開く
 | `M-R` | replace-string | 指定文字列をすべて置換 |
 | `M-^R` | query-replace | 1つずつ置換確認しながら置換 |
 | `^X ^S` | incremental-forward-search | 文字列検索から開始 (MAGIC モード) |
-| `^X ^R` | incremental-reverse-search | 逆方向文字列検索 |
+
+> 逆方向の検索は `^R`、`^X ^R` は redo です (C 版と共通)。
 
 **Query Replace 中のキー:**
 
 | キー | 意味 |
 |------|------|
-| `Y` / `y` / `^S` | この出現を置換する |
-| `N` / `n` / `^R` | この出現を置換しない |
-| `!` | すべてを置換する |
-| `^` | 戻る (前の出現へ) |
-| `^G` | 中止 |
+| `Y` / `y` | この出現を置換する |
+| `N` / `n` | この出現を置換しない |
+
+Rust 版の query-replace は出現ごとに `Replace '...'? (y/n/!/q): ` と確認します。`!` は以降の一致をまとめて置換し、`q` は中断します。`^` (直前の置換に戻る) は未移植です。Rust 版の undo は「1 コマンド = 1 スナップショット」方式で、置換 1 件だけを戻す履歴を持たないためです。`^X u` でセッション全体を取り消してください。
 
 ### 5.3 MAGIC (正規表現) 検索
 
-`MAGIC` モードをONにすると、検索パターンに正規表現が使用できます。
+`MAGIC` モードをONにすると、検索パターンに正規表現が使用できます。実装は `src/regex.rs` にあります。
 
 **正規表現の特殊文字:**
 
@@ -200,9 +218,11 @@ kemacs -f UTF8/CRLF/ f.txt  # UTF-8 CRLFでファイルを開く
 | `$` | 行の末尾 (パターンの末尾に限る) |
 | `[...]` | 文字クラス (例: `[a-z]`) |
 | `[^...]` | 否定文字クラス |
-| `\` | 次の文字をエスケープ (特殊文字をリテラルに) |
+| `\\` | 次の文字をエスケープ (特殊文字をリテラルに) |
 
-**EXACT モード:** `EXACT` モードをONにすると、検索時の大文字小文字が区別されます。
+`+` / `?` / `|` / `()` は C 版に存在しなかったため、Rust 版でもメタ文字ではなくリテラルとして扱われます。
+
+**EXACT モード:** `EXACT` モードをONにすると、検索時の大文字小文字が区別されます。Rust 版は Unicode 正規形への変換と `src/casefold.rs` のテーブルにより、全角文字やかなの大小文字無視にも対応しています。
 
 ---
 
@@ -218,12 +238,13 @@ kemacs -f UTF8/CRLF/ f.txt  # UTF-8 CRLFでファイルを開く
 | `^X ^V` | view-file | ファイルをビューモードで開く |
 | `^X ^C` | exit-emacs | 編集を終了 (未保存の変更は確認あり) |
 | `M-Z` | quick-exit | 全バッファを保存して終了 |
-| `^X ^N` | change-file-name | 現在のバッファに関連付けるファイル名を変更 |
+| `^X N` | change-file-name | 現在のバッファに関連付けるファイル名を変更 |
 
 **ファイルの保存について:**
 - ファイルに変更がある場合、モードラインのバッファ名の左に `*` が表示されます。
 - `^X ^S` で保存すると `*` は消えます。
 - 終了時に未保存の変更があると確認プロンプトが表示されます。
+- Rust 版は未編集ファイルを元バイト列のまま書き戻し、SJIS で表現できない文字などは `KEMACS-U+XXXX;` 形式の ASCII エスケープで保存して読み込み時に復元します。
 
 ---
 
@@ -238,15 +259,15 @@ kemacs では画面を複数のウィンドウに分割して作業できます�
 | `^X 0` | delete-window | 現在のウィンドウを閉じる |
 | `^X O` | next-window | 次のウィンドウへ移動 |
 | `^X ^Z` | shrink-window | ウィンドウを縮小 |
-| `^X ^[` | enlarge-window | ウィンドウを拡大 ( `^X ^` も同じ) |
-| `^X Z` | enlarge-window | ウィンドウを拡大 |
-| `^X W` | resize-window | ウィンドウのサイズを直接指定 |
+| `^X Z` | enlarge-window | ウィンドウを拡大 ( `^X ^` も同じ) |
 
 **ウィンドウサイズ変更:**
-- `M-^S` (change-screen-size): 画面の行数を変更
-- `M-^T` (change-screen-width): 画面の列数を変更
+- `M-^S` (newsize): 画面の行数を変更
+- `M-^T` (newwidth): 画面の列数を変更
 - `M-n ^X W` (n = 行数): 指定した行数でウィンドウをリサイズ
-- `M-n M-S` (n = 行数): 指定した行数で画面をスクロール
+- `M-n M-^V` / `M-n M-^Z`: 指定した行数で画面をスクロール
+
+同じバッファを複数ウィンドウで表示しても、カーソル位置とマークはウィンドウ×バッファ単位で独立しています。Rust 版はリサイズイベントを検知するとウィンドウ高さを再配分して全行を再描画します (`src/input.rs` / `src/display.rs`)。
 
 ---
 
@@ -259,15 +280,16 @@ kemacs では画面を複数のウィンドウに分割して作業できます�
 | `^X K` | kill-buffer | 現在のバッファを削除 |
 | `^X X` | next-buffer | 次のバッファに順に移動 |
 | `M-^N` | name-buffer | バッファ名を変更 |
-| `M-N` | rename-buffer | ファイル名のないバッファの名前変更 |
 
 **バッファ一覧:** `^X ^B` で表示される一覧画面では、各バッファの名前、ファイル名、サイズ、モードが確認できます。
+
+> 元の C 版にあった `M-N` (単独) による rename-buffer は Rust 版では未移植です (`M-N` は次の段落へ移動に割り当てられています)。名前の変更には `M-^N` を使用してください。
 
 ---
 
 ## 9. モード
 
-モードは `^X M` (add-mode) でON、`^X ^M` (del-mode) でOFFに切り替えます。`M-M` はグローバルモード、`M-^M` はグローバルモードの削除です。
+モードは `^X M` (set-mode) でON、`^X ^M` (del-mode) でOFFに切り替えます。`M-M` はグローバルモード、`M-^M` はグローバルモードの削除です。モード名は大文字小文字を問わず、コード文字 (先頭1文字) でも指定できます。
 
 ### 9.1 モード一覧
 
@@ -277,66 +299,74 @@ kemacs では画面を複数のウィンドウに分割して作業できます�
 | **VIEW** | V | 読み取り専用モード (編集不可) |
 | **CMODE** | C | C言語編集モード (自動インデント等) |
 | **PYMODE** | P | Python編集モード (自動インデント等) |
+| **MDMODE** | D | Markdown編集モード (Rust 版の実装。箇条書き継続・採番・conceal 等) |
 | **OVER** | O | 上書きモード (挿入ではなく上書き) |
 | **MAGIC** | M | 正規表現検索を有効化 |
 | **EXACT** | E | 検索時に大文字小文字を区別 |
-| **ASAVE** | A | 自動保存を無効にする (反直感的) |
-| **BINARY** | B | バイナリモード (コード変換無効) |
+| **ASAVE** | A | 自動保存を有効にする (`$asave` 文字ごとに `#ファイル名#` へ書き出し) |
+| **CRYPT** | Y | 暗号化モード (`M-E` または `M-x set-strong-key` で設定) |
+| **SPELL** | S | 未移植 (フラグのみ定義され、動作は未実装) |
+| **BINARY** | B | 未移植 (フラグのみ定義され、コード変換無効化の動作は未実装) |
 
-> モードラインには、有効なモードのコード文字 (W, C, P, V, O, M, E, A, B) が短縮表示されます。
+> モードラインには、有効なモードのコード文字 (W, C, P, D, E, V, O, M, Y, A など) が短縮表示されます。定義は `src/buffer.rs`、モード別の動作は `src/modes.rs` にあります。
+
+> 元の C 版では ASAVE が「自動保存を無効にする (反直感的)」という意味でしたが、Rust 版では ASAVE が有効なときに自動保存を行います。
 
 ### 9.2 グローバルモード
 
-- `M-M` (add-global-mode): 全バッファにモードを適用
-- `M-^M` (del-global-mode): グローバルモードを削除
+- `M-M` (setgmode): 全バッファにモードを適用
+- `M-^M` (delgmode): グローバルモードを削除
+
+Rust 版の `set_mode` / `delmode` も全バッファへ適用されます。
 
 ### 9.3 モードの自動設定
 
-`auto-mode-for-file` コマンドを使って、ファイル拡張子に基づいて自動的にモードを設定できます。
+Rust 版はファイル拡張子に基づいてモードを自動設定します (起動時・ファイルオープン時に `src/modes.rs` の `auto_mode()` が呼ばれます)。
 
-```lisp
-; .kemacsrc に追加
-auto-mode-for-file WRAP "\.txt$"
-auto-mode-for-file CMODE "\.c$"
-auto-mode-for-file CMODE "\.h$"
-auto-mode-for-file PYMODE "\.py$"
-```
+| 拡張子 | モード |
+|--------|--------|
+| `.c` / `.h` | CMODE |
+| `.py` | PYMODE |
+| `.md` / `.markdown` | MDMODE |
 
-kemacs のデフォルトでは `.c`/`.h` に CMODE、`.py` に PYMODE が自動設定されます。
+> 元の C 版にあった `auto-mode-for-file` コマンドは Rust 版では未移植です。上の表の対応は組み込みで行われ、個別の追加はスクリプトから行えません。
 
 ---
 
 ## 10. モードライン (Mode Line)
 
-画面の最下行に表示されるステータス行。デフォルトのフォーマット:
+画面の最下行に表示されるステータス行。Rust 版のデフォルトのフォーマットは次のとおりです (`src/editor.rs` の `mode_line_format`)。
 
 ```
-%=%* %p %v (%M) %=%= %<%b%> %=%= File: %F %=%= %c %-|
+== %p %v (%m) == %b == File: %F == %c %-
 ```
 
 | コード | 意味 |
 |--------|------|
-| `%p` | プログラム名 (kemacs) |
-| `%v` | バージョン番号 |
+| `%p` / `%P` | プログラム名 (Rust 版は `日本語μEMACS`) |
+| `%v` / `%V` | バージョン番号 (Rust 版は `2.1k`) |
 | `%M` | 有効なモードの名前 (スペース区切り) |
 | `%m` | 有効なモードのコード文字 |
-| `%b` / `%B` | バッファ名 (短縮 / フル) |
+| `%b` / `%B` | バッファ名 (起動時は `main`) |
 | `%f` / `%F` | ファイル名 (ベース名 / フルパス) |
-| `%c` | 現在の文字コード (JIS, SJIS, UJIS, UTF8 等) |
-| `%t` | 現在の時刻 |
+| `%c` / `%C` | 改行種別と文字コード (例: `CRLF/UTF8`) |
+| `%l` | 現在行番号 (1 から) |
 | `%*` | バッファ変更マーカー (`*` = 変更あり, `=` = 未変更, `%` = VIEW モード) |
-| `%<` / `%>` | 再帰レベル表示 ( `<` が再帰的編集の深さ) |
-| `%-%` | 残りを空白で埋める |
-| `%=` | 左側と右側の間をスペースで埋める |
+| `%=` | `=` を出力 (左右の区切り) |
+| `%-` | 右端まで `=` で埋める |
+| `%%` | `%` そのもの |
+
+`%t` (時刻) と `%<` / `%>` (繰り返し) も使用できます。`%t` は UTC の `HH:MM`、`%<` / `%>` は `Editor::prompt_depth` (プロンプトのネスト深さ) に基づくため、C 版のローカル時刻・マクロ再帰レベルとは意味がわずかに異なります。書式コードの実装は `src/display.rs` にあります。
 
 ### 10.1 モードラインのカスタマイズ
 
-`$gmodeline` (グローバル) または `$bmodeline` (バッファローカル) 変数を設定することでフォーマットを変更できます。
+`$mode-line-format` 変数を設定することでフォーマットを変更できます (`^X A` または `set` コマンド)。
 
-```lisp
-; .kemacsrc に追加
-set $gmodeline "%=%b %=%= File: %F %c"
 ```
+set $mode-line-format "== %p %v (%m) == %b == File: %F == %c %-"
+```
+
+> `$gmodeline` / `$bmodeline` は `$mode-line-format` の別名として読み書きできます (C 版と同じ名前が使えます)。
 
 ---
 
@@ -359,137 +389,125 @@ Hello, World!     ← 入力
 ^X E              ← マクロを再生
 ```
 
+`^U` で繰り返し回数を指定すると、その回数だけマクロを再生します (`C-X E` のプレフィックス引数)。
+
 ### 11.2 名前付きプロシージャ
 
-キーボードマクロは番号 (1-40) または名前で保存・呼び出せます。
+キーボードマクロは番号 (1-40) または名前で保存・呼び出せます。Rust 版のスクリプト言語 (`src/script.rs`) では `storemac` / `storeproc` で記録を開始し、`!endm` で終了します。
 
-```lisp
-; キーに番号を割り当てて定義
-M-3 store-macro
+```
+; 番号を指定して定義 (M-3 storemac 相当)
+3 storemac
     insert-string "Hello, World!"
     newline
 !endm
 ```
 
 呼び出し:
-- `M-3 ^X E` または `execute-macro-3` : 番号で呼び出し
-- `M-^E` (execute-procedure): 名前で呼び出し
+- `M-3 ^X E` : 番号で呼び出し
+- `M-x execproc` / `M-x run` : 名前付きプロシージャを実行
+- `M-x execbuf` : バッファの内容をスクリプトとして実行
+- `M-x execfile` : ファイルの内容をスクリプトとして実行
 
-**対話的変数:** `@` で始まる変数はプロンプトを表示してユーザーから入力を取得します。
+スクリプトは `!if` / `!else` / `!endif` / `!goto` / `!return` / `!force`、ラベル (`*` で始まる行)、コメント (`;` で始まる行) に対応します。対話的なプロンプトは `$script-interactive=1` または `M-x toggle-script-interactive` で有効化できます。
 
-```lisp
-set %quest "What file? "
-find-file @%quest
-```
+> 元の C 版にあった対話的変数 (`@` で始まる変数にプロンプトで入力する機能) は Rust 版では未移植です。
 
 ---
 
-## 12. カスタマイズ (.kemacsrc)
+## 12. カスタマイズ
 
-ホームディレクトリの `.kemacsrc` ファイルにマクロコマンドを記述することで、kemacs の起動時に自動的に設定を適用できます。
+Rust 版は起動時にマクロファイルを自動読み込みしません (2.3 節参照)。設定を永続的にしたい場合は、マクロファイルにコマンドを記述して起動後に `M-x execfile` で実行してください。ここではマクロファイルに記述する例を示します。
 
 ### 12.1 エディタ変数の設定
 
-```lisp
-; .kemacsrc -- kemacs の永続設定
-
-; 検索設定
-set $fillcol 72          ; デフォルトの折り返し列
-set $pagelen 0           ; 画面の行数 (0 = 端末に合わせる)
-
-; キー操作の表示
-set $discmd TRUE         ; コマンドをコマンドラインに表示
-set $disinp TRUE         ; 入力文字をコマンドラインに表示
-
-; 時計表示 (30秒間隔)
-set $cperiod 30
-update-modeline          ; 時刻を即座に反映
-
-; 行番号表示
-set $linenumbers TRUE
-set $linenumwidth 6
 ```
+; 検索・表示設定
+set $fill-column 72       ; デフォルトの折り返し列
+set $pagelen 0            ; 画面の行数 (0 指定は現在の端末サイズを使用)
+set $linenumbers TRUE     ; 行番号ガーターを表示
+set $linenumwidth 6       ; 行番号の表示幅
+set $asave 256            ; 256文字ごとに自動保存
+```
+
+> 元の C 版にあった `$discmd`、`$disinp`、`$cperiod` は Rust 版では未移植です。Rust 版の変数名は `$fill-column` のようにハイフン区切りです。`^X A` からも同じ名前で設定できます。
 
 ### 12.2 キーのカスタマイズ
 
-```lisp
-; キーにコマンドを割り当て
-bind-to-key cinsert Enter    ; Enter キーに CMODE の自動インデント
-bind-to-key next-buffer M-]  ; M-] に次のバッファ切り替え
+キーの割り当ては `M-K` (`bindtokey`) で変更し、`M-C-K` (`unbindkey`) で解除します。対話的に「割り当てるコマンド名」と「キー」を順に入力します。
 
-; キーの設定を解除
-unbind-key "^X ^C"
 ```
+; 実行例 (いずれも M-x またはキーから対話的に実行)
+M-x bindtokey    → コマンド名: next-buffer → キー: M-]
+M-x unbindkey    → キー: ^X ^C
+```
+
+キー割当ての確認には `^X ?` (`describe-key`)、一覧は `M-?` (help) で表示できます。
 
 ### 12.3 モードの設定
 
-```lisp
+```
 ; グローバルモード (すべてのバッファに適用)
-add-global-mode WRAP         ; 全バッファでワードラップ
-add-global-mode MAGIC        ; 全バッファで正規表現検索
+setgmode WRAP             ; 全バッファでワードラップ
+setgmode MAGIC            ; 全バッファで正規表現検索
 
 ; バッファローカルモード
-add-mode VIEW                ; 現在のバッファをビューモード
+set_mode VIEW             ; 現在のバッファをビューモード
 ```
 
 ### 12.4 便利な設定例
 
-```lisp
-; .kemacsrc の完全例
-
+```
 ; --- 基本設定 ---
-set $fillcol 72
-set $discmd TRUE
-set $disinp TRUE
-set $cperiod 30
+set $fill-column 72
+set $linenumbers TRUE
+set $linenumwidth 6
 
 ; --- ファイル操作 ---
 set $asave 256              ; 256文字ごとに自動保存
 
 ; --- 検索 ---
-add-global-mode MAGIC        ; 正規表現検索をデフォルト
+setgmode MAGIC              ; 正規表現検索をデフォルト
+setgmode EXACT              ; 大文字小文字を区別
 
-; --- キー割り当て ---
-bind-to-key delete-blank-lines "^X O"     ; ^X O で空行削除
-bind-to-key goto-matching-fence M-]       ; M-] で対応する括弧へ移動
+; --- モードライン ---
+set $mode-line-format "== %p %v (%m) == %b == File: %F == %c %-"
 
 ; --- ファイルタイプ別モード ---
-auto-mode-for-file CMODE "\\.c$"
-auto-mode-for-file CMODE "\\.h$"
-auto-mode-for-file CMODE "\\.cpp$"
-auto-mode-for-file PYMODE "\\.py$"
-auto-mode-for-file WRAP "\\.txt$"
+; 拡張子による自動設定は組み込み (.c/.h → CMODE, .py → PYMODE, .md → MDMODE)
 ```
 
 ---
 
 ## 13. 日本語・文字コード
 
-kemacs は JIS, SJIS, UJIS(EUC-JP), UTF-8 の4つの文字コード体系に対応しています。
+kemacs は UTF-8, SJIS, UJIS(EUC-JP), JIS の文字コード体系に対応しています。Rust 版の変換処理は `src/encoding.rs` にあります。
 
 ### 13.1 文字コードの変更
 
 | キー | コマンド | 説明 |
 |------|----------|------|
-| `^X A` | set-variable | 環境変数を設定 ($bcode, $fcode, $tcode 等) |
+| `^X A` | set-variable | 環境変数を設定 ($bcode, $fcode 等) |
 
 **設定可能な変数:**
 
 | 変数 | 対象 | 説明 |
 |------|------|------|
 | `$fcode` | 新規バッファ | 新しく開くファイルのデフォルト文字コード |
-| `$tcode` | 端末全体 | 端末表示用の文字コード |
-| `$bcode` | 現在のバッファ | ファイル入出力時の文字コード |
+| `$bcode` / `$kcode` / `$tcode` | 現在のバッファ | ファイル入出力時の文字コード |
+
+> 端末表示用の文字コードを個別に設定する機能 (C 版の `$tcode`) は Rust 版では未移植です。上の `$tcode` は `$bcode` の別名として扱われます。
 
 **文字コードの指定方法:**
 
 | コード | 説明 |
 |--------|------|
-| `JIS-NEW-ASCII` | JIS 新字体でアルファベット |
-| `JIS-OLD-ROMAJI` | JIS 旧字体でローマ字 |
+| `JIS-NEW-ROMAJI` | JIS (ISO-2022-JP / 新字体ローマ字) |
 | `SJIS` | シフト JIS |
-| `UJIS` | EUC-JP / ユニバーサル JIS |
+| `UJIS` | EUC-JP / ユニバーサル JIS (`EUC` も指定可) |
 | `UTF8` | UTF-8 |
+
+C 版にあった `JIS-NEW-ASCII` / `JIS-OLD-ROMAJI` の区別は Rust 版では未移植です。
 
 **EOL (改行コード) の指定方法:**
 
@@ -502,31 +520,38 @@ kemacs は JIS, SJIS, UJIS(EUC-JP), UTF-8 の4つの文字コード体系に対�
 **使用例:**
 
 ```
-^X A  →  $bcode  →  UTF8/CRLF/
+^X A  →  $bcode  →  CRLF/UTF8
 ```
 
-これにより、現在のバッファの文字コードを UTF-8、改行コードを CRLF に設定します。
+これにより、現在のバッファの文字コードを UTF-8、改行コードを CRLF に設定します。`CRLF/UTF8` と `UTF8/CRLF` のどちらの順序でも解釈できます。
 
 ### 13.2 コマンドラインでの指定
 
 ```sh
-kemacs -f UTF8/CRLF/ file.txt    # ファイルコード = UTF-8, EOL = CRLF
-kemacs -t UJIS/ file.txt          # 端末コード = UJIS, EOL = LF
-kemacs -b file.txt                # BINARY モードで起動
+cargo run -- --code CRLF/UTF8 file.txt    # ファイルコード = UTF-8, EOL = CRLF
+cargo run -- --code UJIS/ file.txt        # ファイルコード = UJIS, EOL = LF
 ```
+
+`--code` はファイル引数より前に置いてください。Rust 版では `--code` が指定された場合、その設定がすべてのファイル引数へ適用されます。
 
 ### 13.3 BINARY モード
 
-コード変換を完全に無効にしたい場合は BINARY モードを使用します。
-
-| キー | コマンド |
-|------|----------|
-| `^X M` | add-mode BINARY | BINARY モードをON (コード変換停止) |
-| `^X ^M` | del-mode BINARY | BINARY モードをOFF (コード変換有効) |
+コード変換を完全に無効にする BINARY モードは Rust 版では未移植です (フラグは定義されていますが、変換を停止する動作は未実装です)。`^X M` で `BINARY` を指定しても変換動作は変わりません。文字コードを固定したい場合は `--code` または `$bcode` を使用してください。
 
 ### 13.4 設定の確認
 
-`^X =` (buffer-position コマンド) を実行すると、カーソル位置、文字コード等の情報が表示されます。
+`^X =` (showcpos コマンド) を実行すると、カーソル位置、現在の行番号、文字コード・改行種別等の情報が表示されます。
+
+### 13.5 暗号化 (Rust 版の拡張)
+
+| 操作 | 説明 |
+|------|------|
+| `M-E` (setcrkey) | C 版と同じアルゴリズム (DLH-POLY-86-B / Beaufort) のキーを設定。CRYPT モードになり、保存時に暗号化・読込時に復号する。 |
+| `M-x set-strong-key` | XChaCha20-Poly1305 + PBKDF2-SHA256 (100,000 回) による認証付き暗号化を有効化。保存形式は `KEMACS-STRONG-V1\0 | salt(16) | nonce(24) | ciphertext+tag(16)`。 |
+| `M-x crypt-off` | 暗号化を解除。 |
+| `$crypt` | 現在の設定 (`NONE` / `CLASSIC` / `STRONG`) を参照。 |
+
+強暗号ファイルを `C-X C-F` で開くとパスワードを要求します (パスワード入力はエコーなしで行われます)。Classic (Beaufort) は難読化であり安全な暗号ではないため、機密情報の保護には使用しないでください。実装は `src/crypt.rs` にあります。
 
 ---
 
@@ -536,24 +561,27 @@ kemacs -b file.txt                # BINARY モードで起動
 
 | キー | コマンド | 意味 |
 |------|----------|------|
-| `M-?` | help | オンラインヘルプをバッファに読み込み |
+| `M-?` | help | キー割当て一覧をバッファに読み込み |
 | `^X ?` | describe-key | キーに割り当てられたコマンドを調べる |
-| `^X ^?` | describe-bindings | すべてのキー割り当てを表示 |
 | `M-A` | apropos | コマンド名を部分一致検索 |
+
+`M-?` は外部の `emacs.hlp` を読むのではなく、現在のキー割当てからヘルプバッファを生成します。元の C 版にあった `^X ^?` (describe-bindings) は未移植ですが、同等の一覧を `M-?` で表示できます。
 
 ### 14.2 コマンドの実行
 
 | キー | コマンド | 意味 |
 |------|----------|------|
-| `M-X` | execute-named-command | コマンド名を指定して実行 (補完あり) |
+| `M-X` | execute-named-command | コマンド名を指定して実行 |
 | `^X E` | execute-macro | 保存したマクロを実行 |
 
 **M-X の使い方:**
 1. `M-X` を押す
-2. コマンド名を入力 (途中で `<Tab>` で補完、`<ESC>` で確定)
+2. コマンド名を入力
 3. 必要な引数を入力
 
-**例:** `M-X goto-line <Enter> 100 <Enter>` — 100行目へジャンプ
+**例:** `M-X gotoline <Enter> 100 <Enter>` — 100行目へジャンプ
+
+内部のコマンド名 (`gotoline`、`filefind`、`yank` など) は C 版の名前をそのまま使用しています。Rust 版の `M-X` には補完機能はありません (未移植)。
 
 **対象コマンドの検索:** `M-A` でキーワードを入力すると、そのキーワードを含むコマンド名の一覧が表示されます。
 
@@ -565,14 +593,14 @@ kemacs -b file.txt                # BINARY モードで起動
 
 | キー | コマンド | 意味 |
 |------|----------|------|
-| `^X !` | shell-command | OSコマンドを実行 |
-| `^X @` | pipe-command | OSコマンドにバッファをパイプ |
-| `^X #` | filter-buffer | バッファをフィルタコマンドにパイプ |
-| `^C` | (shell escape) | シェルに一時脱出 |
+| `^X !` | shell-command (spawn) | OSコマンドを実行 |
+| `^X C` | spawncli | 対話的なシェルを起動 |
 
 ```
 ^X ! ls -la    ← シェルコマンドを実行
 ```
+
+> `^X @` (pipe-command)、`^X #` (filter-buffer) は C 版と同じキーで使えます。`^C` (シェル一時脱出) は未移植です。raw mode を一時解除してシェルへ制御を渡す処理が `input::run()` と協調していないためで、`^X !` や `^X C`、スクリプトの `&escape` 関数で代替してください。実装は `src/system.rs` にあります。
 
 ### 15.2 行編集
 
@@ -590,15 +618,25 @@ kemacs -b file.txt                # BINARY モードで起動
 | `^X U` | undo | 直前の編集を取り消す |
 | `^X R` | redo | アンドゥした編集をやり直す |
 
+Rust 版の undo は「1 コマンド = 1 スナップショット」方式で、C 版のコマンド境界モデルと同じ粒度です。
+
 ### 15.4 その他
 
 | キー | コマンド | 意味 |
 |------|----------|------|
 | `^L` | refresh-screen | 画面を再描画 |
-| `M-!` / `ESC-!` | reposition-window | カーソル行を画面上に配置 |
-| `M-^L` | reposition-window | カーソル行を画面上に配置 |
+| `M-!` / `M-^L` | reposition-window | カーソル行を画面上に配置 |
 | `^X =` | buffer-position | カーソル位置・ファイル情報を表示 |
 | `M-~` | unmark-buffer | マークをクリア (リージョン解除) |
+| `^X L` | (line numbers) | 行番号ガーターの幅を設定 |
+| `^X l` | (line numbers) | 行番号ガーターの表示を切り替え |
+| `M-Y` | md_preview | Markdown プレビューを外部コマンドで実行 (Rust 版追加。プレビュー中に `^C` で中止) |
+| `^X Y` | md_conceal_toggle | Markdown の強調記号・リンク URL を描画時に非表示 (Rust 版追加) |
+| `M-x toggle-color` | toggle-color | カラー表示の切り替え (Rust 版追加。8/256 色・truecolor 対応) |
+
+**マウス操作 (Rust 版追加):** SGR 1006 マウスに対応しています。左クリックでカーソル移動、ドラッグでリージョン選択、ダブルクリックで単語選択、Shift+クリックでリージョン延長、右クリックで mark 設定、ホイールで行スクロール (全角文字の表示桁を考慮) ができます。
+
+**描画 (Rust 版追加):** 変更行・モード行・メッセージ行・カーソルのみを端末へ送出する差分描画を行い、リサイズ時には全行を再描画します (`src/display.rs` / `src/input.rs`)。
 
 ---
 
@@ -609,10 +647,12 @@ kemacs -b file.txt                # BINARY モードで起動
 | 画面が乱れる | 端末設定不一致 | `^L` で再描画、または `M-^S`/`M-^T` で画面サイズを再設定 |
 | タブが挿入される | WRAP モードの影響 | `M-^M WRAP` または `^X ^M WRAP` で WRAP モードをOFF |
 | 検索で大文字小文字が区別されない | EXACT モードがOFF | `M-M EXACT` でON、`M-^M EXACT` でOFF |
-| 日本語が文字化け | 文字コード不一致 | `^X A` で `$bcode` を `UTF8` 等に設定 |
-| ファイルが読み込めない | パス指定間違い | `FEXPAND` 機能で `~` が展開されます |
-| キーが効かない | キーバインドが変更されている | `^X ?` でキーのコマンドを確認、`bind-to-key` で再設定 |
+| 日本語が文字化け | 文字コード不一致 | `^X A` で `$bcode` を `CRLF/UTF8` 等に設定、または起動時に `--code` を指定 |
+| ファイルが読み込めない | パス指定間違い | `~/` のホームディレクトリ展開に対応しています |
+| キーが効かない | キーバインドが変更されている | `^X ?` でキーのコマンドを確認、`M-K` (`bindtokey`) で再設定 |
 | マクロが再生されない | マクロが記録されていない | `^X (` から `^X )` まで再度記録 |
+| 画面が更新されない | リサイズ後の描画ズレ | Rust 版はリサイズイベントで自動的に全描画します。必要なら `^L` で再描画 |
+| 暗号化ファイルが開けない | パスワード不一致 | 強暗号ファイルは復号失敗時に読み取り専用で開き警告を表示します。正しいキーで再オープンしてください |
 
 ---
 
@@ -620,11 +660,9 @@ kemacs -b file.txt                # BINARY モードで起動
 
 | ファイル | 内容 |
 |----------|------|
-| `emacs.hlp` | オンラインヘルプ (`M-?` で表示) |
-| `emacs.tut` | 初心者用チュートリアル (`kemacs -x "view-file emacs.tut"`) |
-| `emacs.key` | キーバインド一覧 |
-| `magic.doc` | MAGIC (正規表現) 検索説明 |
-| `WhatsNew` | 新機能変更履歴 |
-| `kemacs.man` | man ページ |
-| `docs/cmode使用法.md` | CMODE (C 編集モード) の詳細 |
-| `docs/Python_mode使用法.md` | PYMODE (Python 編集モード) の詳細 |
+| `M-?` (help) | キー割当て一覧 (Rust 版は組み込みで生成。外部 `emacs.hlp` は同梱しません) |
+| `README.md` | ビルド・実行・テストと主な機能 |
+| `docs/Rust移植.md` | 実装範囲・機能一覧・未移植項目・ソース対応表 |
+| `docs/mdmode.png` | Markdown Mode のスクリーンショット |
+| `docs/pymode.png` | Python Mode のスクリーンショット |
+| C 版のドキュメント (`emacs.tut`, `emacs.key`, `magic.doc`, `WhatsNew`, `kemacs.man`, `docs/cmode使用法.md`, `docs/Python_mode使用法.md`) | 未移植／非同梱 — 元の C 版は別リポジトリにあります。Rust 版のモード詳細は `docs/Rust移植.md` とソース (`src/modes.rs`) を参照してください。 |

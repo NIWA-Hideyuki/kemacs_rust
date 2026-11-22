@@ -52,7 +52,8 @@ WSL2 環境では Windows 側のターミナルが `Ctrl+V` を「貼り付け�
 ## 3. Linux / WSL 側の tty 設定 (補助)
 
 kemacs は raw モードで動作するため通常不要ですが、シェルから起動する前や tmux/screen 経由で
-使う場合は以下を確認してください。
+使う場合は以下を確認してください。Rust 版では端末の raw モードを **crossterm** が管理するため、
+kemacs 起動中に `stty` を変更する必要はありません。
 
 ```sh
 # XON/XOFF フロー制御を無効化 (Ctrl+S / Ctrl+Q のため)
@@ -116,8 +117,14 @@ TERM=xterm-256color kemacs somefile.txt
 
 ---
 
-## 関連
+## 関連ソース (Rust 版)
 
-- `termio.C_`: `ttopen()` で raw モード設定 (`cfmakeraw`)
-- `tcap.C_`: 端末機能の初期化 (`TERM_MODERN` で bracketed paste 等)
+- `src/input.rs`: 端末の raw モード設定とキー入力を担当します。Rust 版は **crossterm** を
+  使って端末を raw モードに切り替え、キーイベント・リサイズイベント・SGR 1006 のマウス
+  イベントを読み取ります。crossterm は `Ctrl+V` を「貼り付け」として特別扱いせず、端末から
+  届いたキーをそのまま kemacs のキー割当てへ渡します。したがって `^V` が届かない原因は
+  kemacs 側ではなく、セクション 1 / 2 の Windows 側ターミナル設定にあります。
+- `src/keycode.rs`: キーコード (`CTLFLG` / `META` / `CTLX` / `SPEC`) と `C-` / `M-` /
+  `C-X` プレフィックスの定義です。`^V` (`0x16`) はここで定義されたキーコードを経由して
+  `forwpage` (次ページへスクロール) に割り当てられます。
 - `docs/kemacs使用手引書.md`: 全般的な使用方法

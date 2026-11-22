@@ -1,14 +1,20 @@
 # kemacs Markdown Mode 使用方法
 
+> 本ドキュメントは Rust 版 kemacs の実装 (`src/modes.rs`, `src/display.rs`,
+> `src/commands.rs`, `src/system.rs`) に基づく。C 版のソース / ビルドは
+> 別リポジトリに移管済みで、このリポジトリには含まれない。
+
 kemacs に組み込まれた **Markdown Mode (MDMODE)** は、CommonMark / GFM スタイルの
 Markdown を「構造テキスト」として編集するためのモードです。行頭マーカー
 (`#`, `>`, `- `, `1. `, `- [ ] `, 3 連続のバッククォート) を認識し、改行時のマーカー継続、
 再インデント、デデント、見出し・リスト・引用・フェンス・表・タスクリストの
-構造編集を提供します。
+構造編集を提供します。Rust 版では `src/modes.rs` に実装されています。
 
 実装済み: **Phase 1 (モード骨格 + 自動インデント + 再インデント + デデント)**、
-**Phase 2 (構造編集 + アウトライン)**、**Phase 3 (conceal + モデルイン)**、
-**Phase 4 (自動ペア + 保存時フック + 外部プレビュー)**。
+**Phase 2 (構造編集 + アウトライン)**、**Phase 3 (conceal)**、
+**Phase 4 (自動ペア + 外部プレビュー)**。
+ただし Phase 3 の「モデルインの Markdown 専用指定子」、Phase 4 の「保存時フック」は
+Rust 版では未移植です (`$md-highlight`, `$md-preview-on-save` 等)。
 なお折りたたみは判定により実装せず、アウトラインで代替します。
 
 ---
@@ -20,28 +26,30 @@ Markdown を「構造テキスト」として編集するためのモードで�
 - `.md` / `.markdown` ファイルを書くとき。README、設計書、メモ、日記、
   技術ノート、プレゼン原稿など、Markdown で執筆するすべての場面。
 - Markdown の構造記号 (`#`, `-`, `>`, `1.`) を「いちいち手で数えずに」
-  入力したいとき。改行すればマーカーが自動で続く。
+  入力したいとき。改行すればマーカーが自動で続く (`src/modes.rs::md_insert`)。
 - 番号リストの採番を自動で行いたいとき。`1.` と書けば `2.` `3.` と続き、
-  途中で行を挿入しても `M-x md-list-renumber` で振り直せる。
+  `M-x md-list-renumber` でバッファ内の連続した番号リストを振り直せる。
 - 長い Markdown ドキュメントを「セクション単位」で移動したいとき。
   アウトライン (`M-O`) が見出しの一覧になり、折りたたみの代わりになる。
 - チェックリスト (タスクリスト) をテキストで管理したいとき。
   `- [ ]` ↔ `- [x]` の切替ができる。
 - 外部の Markdown ビューア (grip / pandoc / ブラウザ) で確認しながら
-  書きたいとき。`M-Y` でプレビューを起動できる。
+  書きたいとき。`M-Y` でプレビューを起動できる (`src/system.rs`)。
 - すでに `$md-*` 変数で挙動を調整したいとき。インデント幅、マーカー継続、
-  conceal、自動ペアなどを個別に ON/OFF できる。
+  conceal、自動ペアなどを個別に ON/OFF できる (`C-X A` で設定)。
 
 ### 1.2 使わない方が良い場合
 
 - 素のテキストのまま編集したいとき。`.md` を開くと automode で ON になるが、
-  `M-x md-mode` でいつでも OFF にできる。
-- `.md` 以外のファイル。automode は `.md` / `.markdown` のみが対象。
+  `M-x md_mode` でいつでも OFF にできる。
+- `.md` 以外のファイル。automode は `.md` / `.markdown` のみが対象
+  (`src/modes.rs::auto_mode()`)。
 - 脚注・数式・参照リンクなど、行を跨ぐ解決が必要な複雑な Markdown を
   「完全にパース」したいとき。このモードは行指向の構造編集までを扱う。
-- 見出しやコードに色を付けたいとき。このモードは conceal (空白置換) のみで、
-  色や反転は使わない (`$md-highlight` は実装しない)。
-- 折りたたみ (セクションの畳み込み) が欲しいとき。アウトラインで代替する。
+- 見出しやコードに色を付けたいとき。Rust 版は conceal (非表示) のみで、
+  色や反転は行単位で使わない (`$md-highlight` は未移植)。
+- 折りたたみ (セクションの畳み込み) が欲しいとき。アウトラインで代替する
+  (折りたたみは未移植)。
 
 ---
 
@@ -49,60 +57,63 @@ Markdown を「構造テキスト」として編集するためのモードで�
 
 | 機能 | コマンド名 | 既定キー | 説明 |
 |------|-----------|---------|------|
-| モード切替 | `md-mode` | `M-x` | MDMODE を ON/OFF |
-| 自動インデント (改行時) | `mdinsert` | `Enter` | 行頭マーカーを継続 |
+| モード切替 | `md_mode` | `M-x` | MDMODE を ON/OFF (`src/modes.rs::md_mode`) |
+| 自動インデント (改行時) | `mdinsert` (`newline` 経由) | `Enter` | 行頭マーカーを継続 |
 | 行の再インデント | `mdindent` | `M-J` | カレント行のインデントを修正 |
-| バックスペース (デデント) | `md_backspace` | `Backspace` | 行頭マーカー/インデントを 1 段削除 |
-| TAB | `md_tab` | `TAB` | 表行では次の `|` へ、リスト行頭ではインデント |
+| バックスペース (デデント) | `md-backspace` (`backdel` 経由) | `Backspace` | 行頭マーカー/インデントを 1 段削除 |
+| TAB | `md-tab` (`tab` 経由) | `TAB` | 表行では次の `|` へ、リスト行頭ではインデント |
 | 見出し挿入 | `md-insert-heading` | `^X G` | `#` × n + ` ` を挿入 |
 | 見出しレベル +1 | `md-heading-up` | `^X H` | レベルを上げる (最大 `$md-heading-max`) |
 | 見出しレベル -1 | `md-heading-down` | `M-x` | レベルを下げる (1 で通常行に戻る) |
 | 見出しレベル巡回 | `md-heading-cycle` | `M-x` | 通常行 → H1 → … → 通常行 |
-| 箇条書き切替 | `md-list-toggle` | `M-x` | `-` → `*` → `+` を巡回 |
+| 箇条書き切替 | `md-list-toggle` | `M-x` | マーカーを付加/除去 (C 版の `-` → `*` → `+` 巡回は未移植) |
 | リストのインデント | `md-list-demote` | `M-x` | 1 段深く |
 | リストのデデント | `md-list-promote` | `M-x` | 1 段浅く |
-| 番号の振り直し | `md-list-renumber` | `M-x` | 番号リストを採番し直す (リージョン可) |
+| 番号の振り直し | `md-list-renumber` | `M-x` | バッファ全体の連続 `N. ` 行を採番し直す |
 | タスクリスト切替 | `md-task-toggle` | `M-x` | `- [ ]` ↔ `- [x]` |
-| 太字 | `md-bold` | `M-x` | リージョン/単語を `**` で囲む/外す |
-| 斜体 | `md-italic` | `M-I` | リージョン/単語を `*` で囲む/外す |
-| コード | `md-code` | `M-x` | リージョン/単語を `` ` `` で囲む/外す |
-| 取り消し線 | `md-strike` | `M-x` | リージョン/単語を `~~` で囲む/外す |
-| リンク | `md-insert-link` | `M-x` | リージョンを `[text](url)` に |
+| 太字 | `md-bold` | `M-x` | リージョンを `**` で囲む (解除トグルは未移植) |
+| 斜体 | `md-italic` | `M-I` | リージョンを `*` で囲む |
+| コード | `md-code` | `M-x` | リージョンを `` ` `` で囲む |
+| 取り消し線 | `md-strike` | `M-x` | リージョンを `~~` で囲む |
+| リンク | `md-insert-link` | `M-x` | `Link text:` と `URL:` を尋ねて `[text](url)` に |
 | 引用 (カレント行) | `md-quote-toggle` | `M-x` | `> ` の付加/除去 |
-| 引用 (リージョン) | `md-quote-region` | `M-x` | 全行に `> ` を付加/除去 |
-| フェンス挿入 | `md-insert-fence` | `M-x` | 3 連続バッククォートの対挿入 |
-| フェンス間移動 | `md-goto-fence` | `M-x` | 対応するフェンスへジャンプ |
-| アウトライン | `md-outline` | `M-O` | 見出し一覧を `*Markdown Outline*` に表示 |
-| 見出しへ移動 | `md-goto-heading` | `M-x` | アウトライン行から元の見出しへジャンプ |
-| conceal 表示切替 | `md-conceal-toggle` | `^X Y` | 行頭マーカーを同幅の空白で隠す/戻す |
-| 外部プレビュー | `md-preview` | `M-Y` | `$md-preview-command` をバックグラウンド実行し、出力を `*preview*` に表示 |
-| モデルイン | `%h` `%H` `%l` | 書式指定 | 見出しレベル/セクション/リスト |
+| 引用 (リージョン) | `md-quote-region` | `M-x` | 全行に `> ` を付加 (解除トグルは未移植) |
+| フェンス挿入 | `md-insert-fence` | `M-x` | 3 連続バッククォートの対挿入 (言語はプロンプト) |
+| フェンス間移動 | `md-goto-fence` | `M-x` | 前方の次のフェンスへジャンプ |
+| アウトライン | `md-outline` | `M-O` | 見出し一覧を `*Outline*` に表示 |
+| 見出しへ移動 | `md-goto-heading` | `M-x` | タイトルを入力してカレントバッファの見出しへジャンプ |
+| conceal 表示切替 | `md_conceal_toggle` | `^X Y` | 強調記号とリンク URL を隠す/戻す |
+| 外部プレビュー | `md_preview` | `M-Y` | `$md-preview-command` を実行し、出力を `*Preview*` に表示 |
+| モデルイン | `%h` `%H` `%l` (MDLIST) | 書式指定 | 未移植 (Rust 版は `%m` / `%M` / `%l`=行番号 等のみ) |
 
 `md-bold` / `md-code` / `md-strike` / `md-insert-link` などには既定キーが
-割り当てられていません。`M-x bind-to-key` で好みのキーに割り当ててください。
+割り当てられていません。`M-K` (`bindtokey`) で好みのキーに割り当ててください。
 
 ---
 
 ## 3. 有効化
 
 `.md` / `.markdown` 拡張子のファイルを開くと自動で ON になります
-(`pattbl` の `\\.[ch]$` / `\\.py$` に続く 3 番目と 4 番目のパターン)。
+(`src/modes.rs::auto_mode()` が拡張子を判定し、`MDMDMOD` ビットを立てる)。
+C 版の `pattbl` に相当する仕組みです。
 
 手動で切り替えるには:
 
 ```
-M-x md-mode
+M-x md_mode
 ```
 
-モードラインには `MDMODE` と表示され、`%M` では `D` の文字で示されます。
-引数を指定することもできます: `C-u 1 M-x md-mode` で強制 ON、
-`C-u -1 M-x md-mode` で強制 OFF です。
+モードラインには `MDMODE` と表示され、`%M` では `D` の文字で示されます
+(`src/buffer.rs` の `MODE_NAMES` / `MODE_CODES`)。
+引数を指定することもできます: `C-u 1 M-x md_mode` で強制 ON、
+`C-u -1 M-x md_mode` で強制 OFF です。
 
 ---
 
 ## 4. インデントとマーカー継続
 
-`Enter` を押すと、カーソルより前の行構造から新しい行の先頭が決まります。
+`Enter` を押すと、カーソルより前の行構造から新しい行の先頭が決まります
+(`src/modes.rs::md_insert`)。
 
 | 前の行 | 次の行 |
 |--------|--------|
@@ -116,46 +127,57 @@ M-x md-mode
 | `    code` | `    ` |
 | それ以外 | 同じインデント |
 
-- フェンス内では `#` / `-` / `>` をマーカーとして解釈しません。
+- フェンス内では `#` / `-` / `>` をマーカーとして解釈しません
+  (`md_in_fence_at()` で判定)。
 - `$md-auto-list` が FALSE のとき、リストマーカーは継続しません。
 
 `Backspace` は、カーソルより前が空白のみなら 1 段 (`$md-indent-width`) デデント、
-行頭マーカーの直後ならマーカー 1 段分を削除します。
+行頭マーカーの直後ならマーカー 1 段分を削除します (`md_backspace()`)。
 
-`M-J` はカレント行を再インデントします。引用 `> ` の段数は保持し、
-リストのネストは `$md-indent-width` 単位で再計算します。フェンス内は変更しません。
+`M-J` はカレント行を再インデントします (`md_indent()`)。引用 `> ` の段数は保持し、
+リストのネストは `$md-indent-width` 単位で再計算します。空行とフェンス行は変更しません。
 
 ---
 
 ## 5. 設定変数
+
+Rust 版の `$md-*` 変数は `src/editor.rs` の `Editor` フィールドに保持され、
+`C-X A` (`setvar`) またはスクリプトの変数設定から変更できます。
 
 | 変数 | 型 | 既定 | 意味 |
 |------|----|------|------|
 | `$md-indent-width` | int | 2 | リスト/引用のインデント幅 |
 | `$md-use-spaces` | bool | TRUE | スペースを使う (FALSE でタブ) |
 | `$md-auto-list` | bool | TRUE | 改行時にリストマーカーを継続 |
-| `$md-list-bullets` | str | `- * +` | `md-list-toggle` が巡回する記号 |
-| `$md-fence-lang` | str | (空) | `md-insert-fence` の既定言語 |
 | `$md-heading-max` | int | 6 | 見出しレベルの上限 |
-| `$md-conceal` | bool | FALSE | 行頭マーカーを同幅の空白で隠す |
+| `$md-conceal` | bool | FALSE | 強調記号とリンク URL を画面上だけ隠す |
 | `$md-auto-pair` | bool | FALSE | `*` `` ` `` `[` `_` `~` を対で挿入 |
-| `$md-preview-command` | str | `grip %f` | プレビューコマンド (`%f` はファイル名) |
-| `$md-preview-on-save` | bool | FALSE | 保存後にプレビューを実行 |
+| `$md-preview-command` | str | (空) | プレビューコマンド。空なら `printf 'preview of <fname>\n'` を実行 |
 
-`.kemacsrc` に `set $md-indent-width 4` などを記述できます。
-文字列値に空白を含む場合は `set $md-preview-command "grip %f"` のように
-二重引用符で囲みます。
+`C-X A` で「Variable to set: `md-indent-width`」「Value: `4`」のように入力します
+(先頭の `$` は自動的に取り除かれます)。`.kemacsrc` の自動読み込みは Rust 版には
+ありません。
+
+**未移植の変数**: `$md-list-bullets` (箇条書きの巡回記号)、`$md-fence-lang`
+(フェンス既定言語)、`$md-highlight` (行の色付け)、`$md-preview-on-save`
+(保存後プレビュー)、`$md-table-align-on-save` (保存時テーブル整列)。
+これらを設定しても Rust 版の動作には影響しません。
 
 ---
 
 ## 6. アウトライン
 
-折りたたみは実装せず、アウトラインでセクション間を移動します。
+折りたたみは未移植なので、アウトラインでセクション間を移動します。
 
 ```
-M-O                 → *Markdown Outline* に 「行番号  レベル  見出し」 を一覧表示
-M-x md-goto-heading → カレント行の見出しへジャンプ
+M-O                 → *Outline* に見出しを一覧表示
+M-x md-goto-heading → "Heading: " にタイトルを入力して見出しへジャンプ
 ```
+
+Rust 版のアウトラインは `src/modes.rs::md_outline()` が生成し、
+`レベル個数の "-" + スペース + 見出しテキスト` を段落下げして並べます
+(C 版の「行番号 レベル 見出し」形式は未移植)。
+`md-goto-heading()` は行番号ではなくタイトルの部分一致で検索します。
 
 ---
 
@@ -187,44 +209,54 @@ C-u 3 ^X G        → ### 必要なもの            (H3 を挿入)
 通常行 → # → ## → ### → … → ###### → 通常行
 ```
 
-**ポイント**: 見出しでない行で `md-heading-up` を押すと、行頭に `# ` が
-追加されて H1 になります。逆に H1 で `md-heading-down` を押すと見出しが
-消えて通常のテキストに戻ります。
+**ポイント**: 見出しでない行で `md-heading-up` を押すと、カーソル位置に `# ` が
+追加されます。逆に H1 で `md-heading-down` を押すと見出しが消えて通常の
+テキストに戻ります。見出しレベルの上限は `$md-heading-max` です。
 
 ### 7.2 アウトラインで長い文書を移動する
 
 **場面**: 100 行を超える Markdown を書いていて、セクション間を素早く移動したい。
 
-`M-O` を押すと `*Markdown Outline*` バッファが開き、次のように一覧表示されます。
+`M-O` を押すと `*Outline*` バッファが開き、次のように一覧表示されます
+(行番号列は Rust 版では出力されません)。
 
 ```
-    1  H1  # プロジェクト名
-    5  H2  ## インストール
-   12  H3  ### 必要なもの
-   20  H2  ## 使い方
-   45  H3  ### 例
-   52  H2  ## ライセンス
+- プロジェクト名
+  -- インストール
+    --- 必要なもの
+  -- 使い方
+    --- 例
+  -- ライセンス
 ```
 
-移動したい見出しの行にカーソルを合わせて `M-x md-goto-heading` を押すと、
-元のバッファのその見出しへジャンプします。アウトラインを最新の状態に戻すには
-もう一度 `M-O` を押します。
+元のバッファへ戻って (`^X B` 等) カーソルを合わせたい見出しのタイトルを
+`M-x md-goto-heading` に渡すと、その見出しへジャンプします。
 
-**モデルインにセクション名を出す**: `%H` はカレント行が属するセクションの
-見出しを表示します。`.kemacsrc` に次のように追加すると、常に「いまどの節に
-いるか」が分かります。
+**モデルインにセクション名を出す**: Rust 版では `%H` / `%h` は未移植のため、
+以下の C 版由来の設定はそのままでは動作しません。
 
 ```
 set $gmodeline "%=%* %p %v (%M) %=%= %<%b%> %=%= %H %=%= File: %F %=%= %c %-"
+```
+
+代わりに `C-X A` で `mode-line-format` を設定し、対応済みの指定子を組み合わせます。
+
+```
+Variable to set: mode-line-format
+Value: == %p %v (%m) == %b == File: %F == %c %-
 ```
 
 その他の指定子:
 
 | 指定子 | 表示 | 意味 |
 |--------|------|------|
-| `%h` | `H2` | カレント行の見出しレベル (見出しでなければ空) |
-| `%H` | `## 使い方` | カレント行が属するセクションの見出し |
-| `%l` | `MDLIST` | カレント行がリスト項目なら表示 |
+| `%h` | — | 未移植 (見出しレベル) |
+| `%H` | — | 未移植 (セクション見出し) |
+| `%l` | `12` | Rust 版では行番号 (MDLIST 表示は未移植) |
+| `%m` / `%M` | `D` / `MDMODE` | モード略字 / モード名 |
+| `%f` / `%F` | ファイル名 | 基底名 / フルパス |
+| `%c` | `CRLF/UTF8` | 改行種別 / 文字コード |
+| `%*` | `*` / `=` / `%` | 変更 / 未変更 / VIEW |
 
 ### 7.3 箇条書き・番号リストを作る
 
@@ -244,14 +276,14 @@ set $gmodeline "%=%* %p %v (%M) %=%= %<%b%> %=%= %H %=%= File: %F %=%= %c %-"
 2. 二番目               Enter → 3. 
 ```
 
-箇条書きの記号を変えたいときは `M-x md-list-toggle` を使います。
-既定では `-` → `*` → `+` の順に巡回します。
+マーカーの付加・除去には `M-x md-list-toggle` を使います。
 
 ```
-- 項目     M-x md-list-toggle → * 項目
-* 項目     M-x md-list-toggle → + 項目
-+ 項目     M-x md-list-toggle → - 項目
+- 項目     M-x md-list-toggle → 項目
+項目       M-x md-list-toggle → - 項目
 ```
+
+C 版の `-` → `*` → `+` の巡回 (`$md-list-bullets`) は Rust 版では未移植です。
 
 入れ子 (ネスト) には `M-x md-list-demote` (1 段深く) と
 `M-x md-list-promote` (1 段浅く) を使います。
@@ -263,12 +295,12 @@ set $gmodeline "%=%* %p %v (%M) %=%= %<%b%> %=%= %H %=%= File: %F %=%= %c %-"
 ```
 
 番号リストの採番を振り直したいときは `M-x md-list-renumber` です。
-リージョンを指定すればその範囲だけ、指定しなければカレント行を含む
-連続した `N. ` 行全体が 1 から振り直されます。
+Rust 版はバッファ全体を走査し、連続する `N. ` 行に 1 から順に採番します
+(リージョン指定は未移植)。
 
 ```
 1. 項目A
-1. 項目B       ← リージョンで囲んで M-x md-list-renumber
+1. 項目B       ← M-x md-list-renumber
 1. 項目C
     ↓
 1. 項目A
@@ -304,8 +336,8 @@ set $gmodeline "%=%* %p %v (%M) %=%= %<%b%> %=%= %H %=%= File: %F %=%= %c %-"
 ```
 
 複数行まとめて引用にしたいときは、リージョンで囲んで
-`M-x md-quote-region` を押します。各行に `> ` が付きます。もう一度押すと
-`> ` が外れます。
+`M-x md-quote-region` を押します。各行に `> ` が付きます
+(Rust 版は付加のみで、もう一度押しても外れません)。
 
 ```
 > 一行目
@@ -323,8 +355,8 @@ set $gmodeline "%=%* %p %v (%M) %=%= %<%b%> %=%= %H %=%= File: %F %=%= %c %-"
 
 **場面**: ソースコードやコマンドの実行例を書き入れる。
 
-`M-x md-insert-fence` を押すと、開始行と終了行が対で挿入され、カーソルは
-間に置かれます。
+`M-x md-insert-fence` を押すと `Fence language: ` を尋ねられ、開始行と終了行が
+対で挿入され、カーソルは間に置かれます。
 
 ````
 ```c
@@ -332,14 +364,10 @@ set $gmodeline "%=%* %p %v (%M) %=%= %<%b%> %=%= %H %=%= File: %F %=%= %c %-"
 ```
 ````
 
-`$md-fence-lang` に言語を設定しておくと、開始行に付きます。
+`$md-fence-lang` による既定言語の指定は未移植です。言語は挿入時に入力します。
 
-```
-set $md-fence-lang c
-```
-
-`M-x md-goto-fence` で、フェンスの開始行と終了行を行き来できます。
-コードが長いときに、閉じフェンスの位置を確認するのに便利です。
+`M-x md-goto-fence` で、カレント行より後ろにある次のフェンスへジャンプします
+(前方探索のみ、後方への移動は未移植)。コードが長いときに便利です。
 
 **フェンス内ではマーカーが無効**になるため、シェルスクリプトの `#` コメントや
 `make` の `-` で始まる行を、そのまま書くことができます。
@@ -356,7 +384,8 @@ echo hello
 
 **場面**: simple な表 (GFM) を書きたい。
 
-表の行では `TAB` が次の `|` の直前へカーソルを移動します。
+表の行では `TAB` が次の `|` の直前へカーソルを移動します
+(`src/modes.rs::md_table_next_cell()`)。
 
 ```
 | a | b |      TAB → | a | b |   (2 番目の | の前へ)
@@ -371,64 +400,72 @@ echo hello
 | y    | 2  |
 ```
 
+`md-table-align` や保存時の整列 (`$md-table-align-on-save`) は未移植です。
+
 ### 7.8 強調・コード・リンクを入力する
 
-**場面**: インラインの装飾を入れ替える。
+**場面**: インラインの装飾を入れる。
 
-`M-I` (md-italic) は、リージョン、またはカーソルのある単語を `*` で
-囲みます。もう一度押すと外します。
+`M-I` (md-italic) は、リージョンを `*` で囲みます。リージョンが無い場合は
+何もしません (単語を対象にする動作は未移植)。
 
 ```
 hello world      リージョンで hello を選択して M-I → *hello* world
-*hello* world    同じリージョンでもう一度 M-I → hello world
 ```
 
 同じ操作が `md-bold` (`**`)、`md-code` (`` ` ``)、`md-strike` (`~~`)
 にもあります。これらは既定キーがないので、必要なら
-`.kemacsrc` で割り当ててください。
+`M-K` (`bindtokey`) で割り当ててください。
 
 ```
-bind-to-key md-bold M-D
-bind-to-key md-code M-E
+M-K → Bind command: md-bold → 割り当てるキーを入力
+M-K → Bind command: md-code → 割り当てるキーを入力
 ```
 
-`M-x md-insert-link` は URL を尋ねて `[text](url)` を作ります。
-リージョンがあればその文字列が `text` になります。
+(例示の `M-D` / `M-E` は既に `delfword` / `setcrkey` に確保されているため、
+実際は空いているキーを選んでください。)
+
+`M-x md-insert-link` は `Link text: ` と `URL: ` を順に尋ねて
+`[text](url)` を作ります。
 
 ```
-kemacs という文字列を選択して M-x md-insert-link
+M-x md-insert-link
+Link text: kemacs
 URL: https://example.com/kemacs
 → [kemacs](https://example.com/kemacs)
 ```
 
-リージョンがなければ、URL そのものがカーソル位置に挿入されます。
+リージョンを選択していても、Rust 版ではその文字列は自動で `text` に
+なりません (未移植)。常にプロンプトで入力します。
 
-### 7.9 崩れたインデントを直す、マーカーを隠す
+### 7.9 崩れたインデントを直す、記号を隠す
 
-**場面**: 貼り付けた Markdown のインデントが崩れた、または「マーカー抜きの
+**場面**: 貼り付けた Markdown のインデントが崩れた、または「装飾記号抜きの
 見た目」で確認したい。
 
 - `M-J`: カレント行のインデントを修正します。リストのネストが
   `$md-indent-width` 単位で再計算され、引用 `> ` の段数は保持されます。
 - `Backspace`: 行頭のマーカー (とインデント) を 1 段ごとに削除します。
-- `^X Y`: conceal の ON/OFF。行頭マーカーが**同じ幅の空白**に置き換わります。
+- `^X Y`: conceal の ON/OFF。Rust 版では**強調記号とリンクの URL 部分**が
+  画面上だけ隠れます (`src/display.rs::render_line_concealed()`)。
 
 ```
-# 見出し        → (表示)    見出し
-- 項目          → (表示)    項目
-1. 項目         → (表示)     項目
-- [ ] 項目      → (表示)        項目
-> - 項目        → (表示)    項目
+**太字**              → (表示) 太字
+*斜体*                → (表示) 斜体
+`コード`              → (表示) コード
+~~取り消し~~          → (表示) 取り消し
+[テキスト](https://…) → (表示) テキスト
 ```
 
-フェンス (3 連続バッククォート) は表示されたままです (言語情報を見せるため)。
-4 スペースのコードブロックも conceal の対象になりません。
+行頭の `#` / `>` / リストマーカーは conceal しません。元バイト位置から表示桁への
+対応表を維持するため、カーソル位置はずれません。
+`$md-highlight` (行の色付け) は未移植です。
 
 **自動ペア**: `$md-auto-pair` を TRUE にすると、`*` `` ` `` `[` `_` `~` が
-対で挿入されます。
+対で挿入されます (`src/modes.rs::md_self_insert()`)。`[` は `]` と対になります。
 
 ```
-set $md-auto-pair TRUE
+(設定例) C-X A → Variable to set: md-auto-pair → Value: TRUE
 ```
 
 ### 7.10 プレビューする
@@ -437,10 +474,12 @@ set $md-auto-pair TRUE
 
 #### 7.10.1 grip の準備
 
-kemacs の既定のプレビューコマンドは
-[grip](https://github.com/joeyespo/grip) です。grip は GitHub の README 風
-スタイルで Markdown をブラウザに配信するツールで、ファイルが変更されると
-自動で再読み込みされます。
+Rust 版には既定のプレビューコマンドが内蔵されていません
+(`$md-preview-command` の既定値は空で、その場合は
+`printf 'preview of <fname>\n'` が実行されます)。
+[grip](https://github.com/joeyespo/grip) を使う場合は `C-X A` で設定します。
+grip は GitHub の README 風スタイルで Markdown をブラウザに配信するツールで、
+ファイルが変更されると自動で再読み込みされます。
 
 インストールは OS のパッケージ管理、または Python のパッケージ管理で行います。
 
@@ -465,29 +504,36 @@ grip --browser README.md  # サーバ起動後にブラウザを自動で開く
 grip --export README.md   # サーバを立てずに HTML を書き出す
 ```
 
+**重要**: Rust 版では `%f` のファイル名展開は未移植です。コマンド文字列に
+ファイル名を直接書いてください (例: `grip README.md`)。
+
+```
+C-X A → Variable to set: md-preview-command → Value: grip README.md
+```
+
 #### 7.10.2 プレビューを起動する
 
 ```
 M-Y                  → $md-preview-command をバックグラウンドで実行
-M-x md-preview       → 同じ
+M-x md_preview       → 同じ
 ```
 
-- コマンドの stdout / stderr は新しい `*preview*` バッファにたまり、
-  端末や編集中のバッファには出ません。
-- コマンドは非同期で動くので、^ C を押したらすぐ編集に戻れます。
-- ファイル名のないバッファでは、書き出した一時ファイルを `%f` に渡します。
-  この一時ファイルはプレビューを閉じたときに削除されます。
-- 既定は `grip %f`。`%f` はシェルエスケープ済みのファイル名に置き換わります。
+- コマンドは `sh -c 'exec 2>&1; …'` で起動され、stdout / stderr は新しい
+  `*Preview*` バッファにたまり、端末や編集中のバッファには出ません。
+- コマンドは非同期で動くので、`^C` を押したらすぐ編集に戻れます。
+- 実行中のコマンドは `M-Y` の再実行で停止してから起動し直されます。
+- Rust 版では未保存バッファを一時ファイルへ書き出す処理は未移植です
+  (`%f` も展開されません)。ファイル名バッファを対象にしてください。
 
-ブラウザを自動で開かせたいときは `--browser` を追加します。
+ブラウザを自動で開かせたいときは `--browser` を付けます。
 
 ```
-set $md-preview-command "grip --browser %f"
+Value: grip --browser README.md
 ```
 
-`--browser` を付けなかった場合は、`*preview*` バッファに表示される
+`--browser` を付けなかった場合は、`*Preview*` バッファに表示される
 `Running on http://localhost:6419` の URL をブラウザで開いてください。
-ポートを変えるときは `grip %f 8080` のようにします。
+ポートを変えるときは `grip README.md 8080` のようにします。
 WSL などブラウザを直接開けない環境では、この URL を Windows 側のブラウザで
 開いてください。
 
@@ -500,45 +546,45 @@ grip はファイルが変更されると自動で再読み込みするため、
 | キー | 動作 |
 |-----|------|
 | `M-Y` | プレビューを起動する。既存のプレビューがあれば停止してから起動し直す |
-| `^C` (`*preview*` バッファ上) | プレビューコマンドを停止し、`*preview*` バッファを閉じる |
-| `^X B` → `*preview*` | 他のバッファから `*preview*` へ切り替える |
-| `^X S` | 保存。`$md-preview-on-save` が TRUE なら保存後にプレビューを起動 |
+| `^C` (`*Preview*` バッファ上) | プレビューコマンドを停止し、`*Preview*` バッファを閉じる |
+| `^X B` → `*Preview*` | 他のバッファから `*Preview*` へ切り替える |
+| `^X S` | 保存 (`$md-preview-on-save` は未移植のため保存後プレビューは自動実行されない) |
 
-`*preview*` バッファは読取専用 (VIEW) で、バッファ一覧には出ません。
-閉じると実行中のコマンドも一緒に終了するため、ブラウザのタブだけ残らない
-ように注意してください。
+`*Preview*` バッファは VIEW モードで、出力の末尾に `[preview finished]` が
+追加されます。閉じると実行中のコマンドも一緒に終了するため、ブラウザの
+タブだけ残らないように注意してください。
 
 #### 7.10.4 プレビューを解除する
 
-- `*preview*` バッファに切り替えて `^C` を押す。終了するのはコマンドと
-  `*preview*` バッファだけで、kemacs 本体や他のバッファはそのままです。
-- 他のバッファで作業しているときは `^X B` で `*preview*` を選んでから `^C`。
+- `*Preview*` バッファに切り替えて `^C` を押す。終了するのはコマンドと
+  `*Preview*` バッファだけで、kemacs 本体や他のバッファはそのままです。
+- 他のバッファで作業しているときは `^X B` で `*Preview*` を選んでから `^C`。
 - kemacs を終了 (`^X C`) すると、プレビューも一緒に停止します。
-- 保存のたびにプレビューが起動するのをやめたいときは
-  `set $md-preview-on-save FALSE`。
+- 保存のたびにプレビューが起動する機能 (`$md-preview-on-save`) は未移植です。
 - プレビューは常に 1 つだけです。`M-Y` を再実行すると古いのは停止します。
 
 #### 7.10.5 別のビューアを使う
 
 `$md-preview-command` を書き換えれば、grip 以外のコマンドも使えます。
+`%f` は展開されないので、ファイル名は直接記述します。
 
 ```
-# pandoc で HTML に変換して開く
-set $md-preview-command "pandoc -s %f -o %f.html && xdg-open %f.html"
+# pandoc で HTML に変換して開く (ファイル名を直接指定)
+Value: pandoc -s README.md -o README.html && xdg-open README.html
 ```
 
-一次性のコマンドでは `set $md-preview-on-save TRUE` にすると保存のたびに
-変換→表示が走って便利です。grip のようなサーバを起動するコマンドでは、
-保存のたびにサーバが起動し直されることに注意してください。
+`$md-preview-on-save` は未移植のため、保存ごとの自動変換は行われません。
+必要なら保存後に手動で `M-Y` を実行してください。
 
 #### 7.10.6 困ったとき
 
 | 症状 | 原因 | 解決方法 |
 |------|------|---------|
-| `*preview*` に `command not found` | grip が入っていない、または PATH に無い | `sudo apt install grip` や `pip install grip` |
-| `Address already in use` と出る | 前の grip がまだ起動している | `*preview*` で `^C` で止めてから `M-Y` |
-| ブラウザが開かない | `--browser` が付いていない | `grip --browser %f` にするか、URL を手動で開く |
-| 保存するたびにサーバが再起動する | `$md-preview-on-save` が TRUE | grip は自動更新されるので FALSE でもよい |
+| `*Preview*` に `command not found` | grip が入っていない、または PATH に無い | `sudo apt install grip` や `pip install grip` |
+| `Address already in use` と出る | 前の grip がまだ起動している | `*Preview*` で `^C` で止めてから `M-Y` |
+| ブラウザが開かない | `--browser` が付いていない | `grip --browser README.md` にするか、URL を手動で開く |
+| ファイル名が出ない | `%f` は Rust 版では未展開 | コマンドにファイル名を直接書く |
+| `preview of …` しか出ない | `$md-preview-command` が空 | `C-X A` で grip 等のコマンドを設定 |
 
 ### 7.11 実践: README を 1 から書く
 
@@ -552,7 +598,7 @@ C-u 2 ^X G                    → ## インストール
 C-u 2 ^X G                    → ## 使い方
 1. ビルドする                ← 番号リスト。Enter で 2. になる
 2. 実行する
-M-x md-insert-fence           → ``` が対で入る
+M-x md-insert-fence           → ``` が対で入る (言語はプロンプトで入力)
   $ make
   $ ./kemacs
 M-x md-goto-fence             → 閉じフェンスへ
@@ -560,25 +606,27 @@ C-u 2 ^X G                    → ## ライセンス
 > このソフトウェアはフリーです。   ← M-x md-quote-toggle
 M-O                           → アウトラインで見出しを確認
 M-x md-goto-heading           → 必要な節へジャンプ
-M-Y                           → grip でプレビュー（出力は *preview* へ）
-^X S                           → 保存。ブラウザは自動更新される
+M-Y                           → grip でプレビュー（出力は *Preview* へ）
+^X S                           → 保存。grip はファイル更新を自動検知する
 ```
 
 ---
 
 ## 8. デザイン決定と制限
 
-- 表示は **conceal のみ**。色は使わない（`$md-highlight` は実装しない）。
-- 折りたたみは実装せず、アウトラインで代替する。
-- 表の編集は `TAB` によるセル移動のみ。
-- プレビューは外部コマンドに委譲する（`md-preview`）。出力は `*preview*`
+- 表示は **conceal のみ**。行単位の色付けは未移植 (`$md-highlight` は無い)。
+- 折りたたみは未移植で、アウトラインで代替する。
+- 表の編集は `TAB` によるセル移動のみ (`md-table-align` 等は未移植)。
+- プレビューは外部コマンドに委譲する (`md_preview`)。出力は `*Preview*`
   バッファに集約し、そのバッファで `^C` を押すとコマンドとバッファだけを
   終了できる。
-- conceal は行頭マーカー（見出し `#`、引用 `>`、リスト `-*+ `/`1. `/`- [ ]`）を
-  **同じ幅の空白で置き換える**方式。表示列と物理列が一致するためカーソル位置が
-  ずれず、`updpos` の変更も不要。インラインの強調・コード・リンクは conceal しない。
-- フェンスのdelimiter は conceal しない（言語情報を見せる）。
+- conceal は `src/display.rs::render_line_concealed()` が強調記号
+  (`**` / `*` / `_` / `~~` / `` ` ``) とリンク URL を**ゼロ幅で非表示**にする方式。
+  元バイト位置→表示桁の対応表を維持するためカーソル位置はずれず、
+  `updpos` に相当する補正は不要。行頭マーカーは conceal しない。
+- フェンスの delimiter 自体は変更しない (言語情報を見せるため)。
 - フェンス内の言語別ハイライトは対象外。
+- ビルドは `cargo build`、テストは `cargo test` (C 版の `make` は不要)。
 
 ---
 
@@ -586,12 +634,14 @@ M-Y                           → grip でプレビュー（出力は *preview* 
 
 | 症状 | 原因 | 解決方法 |
 |------|------|---------|
-| モードが ON にならない | `.md` 以外を開いている | `M-x md-mode` で手動 ON |
-| リストが継続しない | `$md-auto-list` が FALSE | `set $md-auto-list TRUE` |
-| インデント幅が変 | `$md-indent-width` を変更した | `set $md-indent-width 2` に戻す |
-| 再インデントが効かない | フェンス内 | フェンス内は意図的に変更しない |
-| conceal が反映されない | `$md-conceal` が FALSE | `^X Y` で ON、または `set $md-conceal TRUE` |
-| `%H` が表示されない | モデルインに指定していない | `set $gmodeline "… %H …"` |
-| 自動ペアが効かない | `$md-auto-pair` が FALSE | `set $md-auto-pair TRUE` |
-| プレビューが起動しない | `$md-preview-command` の設定 | コマンドが PATH 上にあるか確認 |
-| プレビューを止めたい | grip などのコマンドが起動したまま | `*preview*` バッファに切り替えて `^C` |
+| モードが ON にならない | `.md` 以外を開いている | `M-x md_mode` で手動 ON |
+| リストが継続しない | `$md-auto-list` が FALSE | `C-X A` で `md-auto-list` を TRUE に |
+| インデント幅が変 | `$md-indent-width` を変更した | `C-X A` で `md-indent-width` を 2 に戻す |
+| 再インデントが効かない | 空行またはフェンス内 | これらの行は意図的に変更しない |
+| conceal が反映されない | `$md-conceal` が FALSE | `^X Y` で ON、または `C-X A` で TRUE に |
+| 行頭マーカーが隠れない | Rust 版は行頭マーカーを conceal しない | 仕様どおり (強調記号と URL のみ隠れる) |
+| `%H` が表示されない | Rust 版では未移植 | `mode-line-format` で `%m` / `%b` 等を使う |
+| 箇条書きが `- → * → +` に巡回しない | Rust 版では未移植 | `md-list-toggle` は付加/除去のみ |
+| 自動ペアが効かない | `$md-auto-pair` が FALSE | `C-X A` で `md-auto-pair` を TRUE に |
+| プレビューが起動しない | `$md-preview-command` の設定 | コマンドが PATH 上にあるか確認 (既定は空) |
+| プレビューを止めたい | grip などのコマンドが起動したまま | `*Preview*` バッファに切り替えて `^C` |

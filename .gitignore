@@ -1,42 +1,16 @@
+# Rust build output (Cargo.lock is kept for reproducible builds)
+/target/
+
 # Backup and swap files
 *.bak
+*.orig
 *.save
 *.swp
 *.swp.bak
 
-# Object files and statically linked libraries
-*.o
-*.a
+# Python bytecode caches
+__pycache__/
+*.pyc
 
-# Generated top-level makefile (built from mf.c)
-make.file
-
-# kpp-generated C sources and headers.
-# The tracked sources are *.C_ / *.H_; only these three top-level
-# .c/.h files are hand-written and must stay visible.
-/*.c
-/*.h
-!mf.c
-!econfig.h
-!proto.h
-
-# Generated shared-string table and ftoc output
-/Css.c
-/Cxx.c
-/Cstr.data
-
-# Generated runtime configuration (templates .kemacsrc.full / .tmpl are tracked)
+# Local runtime config
 /.kemacsrc
-
-# Built kpp tools
-kpp/kpp
-kpp/ftoc
-kpp/Cxx.c
-
-# Test executables (sources test_*.c and test.h stay tracked)
-tests/test_*
-!tests/test_*.c
-!tests/test_*.h
-
-# Main binary
-kemacs
