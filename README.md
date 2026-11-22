@@ -34,6 +34,35 @@ cargo run -- -v file.txt          # C 版互換のオプションも使用可
 `--code` はファイル引数より前に置いてください (`UTF8`, `SJIS`, `UJIS`, `JIS`
 等)。改行種別は `CRLF/UTF8` のように `/` で指定します。
 
+## リリースビルドとインストール
+
+```sh
+cargo build --release            # target/release/kemacs を生成 (最適化ビルド)
+cargo install --path .           # ~/.cargo/bin/kemacs に配置
+cargo install --locked --path .  # Cargo.lock の依存バージョンを固定して配置
+```
+
+`cargo install` の配置先は `~/.cargo/bin` です。そこが `$PATH` に含まれていれば、`kemacs file.txt` で起動できます。別の場所へ入れる場合は `--root` を指定します。
+
+```sh
+cargo install --root /usr/local --path .   # /usr/local/bin/kemacs へ配置
+```
+
+更新と削除:
+
+```sh
+cargo install --force --path .   # 上書き再インストール
+cargo uninstall kemacs           # 削除
+```
+
+GitHub リポジトリ登録後は、リモートから直接インストールできます。
+
+```sh
+cargo install --git https://github.com/NIWA-Hideyuki/kemacs_rust.git --locked
+```
+
+crates.io への `cargo publish` は行わないでください。LICENSE が非商用制約を含むためです。
+
 ## テスト
 
 ```sh

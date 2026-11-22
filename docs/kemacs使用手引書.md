@@ -45,7 +45,22 @@ Rust 版のキーコード (`CTLFLG` / `META` / `CTLX` / `SPEC`) は `src/keycod
 cargo build
 ```
 
-生成される実行ファイルは `target/debug/kemacs` です。リリースビルドは `cargo build --release` で作成できます。Rust 版にインストール手順はありません。ビルドしたバイナリを任意の場所へ配置して使用してください。
+生成される実行ファイルは `target/debug/kemacs` です。
+
+```sh
+cargo build --release   # target/release/kemacs (最適化ビルド)
+```
+
+**インストール:**
+
+```sh
+cargo install --path .              # ~/.cargo/bin/kemacs へ配置
+cargo install --locked --path .     # Cargo.lock の依存バージョンを固定して配置
+```
+
+`~/.cargo/bin` が `$PATH` に含まれていれば、`kemacs file.txt` で起動できます。別の場所へ入れる場合は `cargo install --root /usr/local --path .` のように `--root` を指定します。更新は `cargo install --force --path .`、削除は `cargo uninstall kemacs` です。
+
+GitHub リポジトリ登録後は `cargo install --git https://github.com/NIWA-Hideyuki/kemacs_rust.git --locked` でリモートから直接インストールできます。crates.io への `cargo publish` はライセンス上おこなわないでください (非商用制約を含むため、LICENSE 参照)。
 
 ### 2.2 起動
 

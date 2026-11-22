@@ -15,6 +15,9 @@
 
 ```sh
 cargo build                       # target/debug/kemacs を生成
+cargo build --release             # target/release/kemacs (最適化ビルド)
+cargo install --path .            # ~/.cargo/bin/kemacs へインストール
+cargo install --locked --path .   # Cargo.lock を固定してインストール
 cargo run -- file.txt             # ファイルを開いて編集 (符号化方式は自動判定)
 cargo run -- --code SJIS new.txt  # SJIS の新規ファイルとして開く
 cargo test                        # Rust の単体・結合・差分テスト
@@ -22,6 +25,8 @@ cargo clippy --all-targets -- -D warnings
 ```
 
 C 版互換の起動オプションも使えます (例: `cargo run -- -v -g 50 file.txt`)。
+
+`cargo install` の配置先は `~/.cargo/bin` で、`--root` で変更できます。更新は `cargo install --force --path .`、削除は `cargo uninstall kemacs` です。GitHub 登録後は `cargo install --git https://github.com/NIWA-Hideyuki/kemacs_rust.git --locked` でも導入できます。crates.io への publish は非商用ライセンスのため行いません。
 
 ## 実装済み
 
