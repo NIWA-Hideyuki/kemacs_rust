@@ -209,6 +209,11 @@ cargo clippy --all-targets -- -D warnings
 | `^X ^S` | incremental-forward-search | 文字列検索から開始 (MAGIC モード) |
 
 > 逆方向の検索は `^R`、`^X ^R` は redo です (C 版と共通)。
+>
+> **Rust 版**: `^S` / `^R` の検索語入力と `M-R` / `M-^R` の
+> 「Replace string:」「with:」プロンプトは **ESC** で確定します
+> (改行では確定しません)。`^G` は中止、`BackSpace` は1文字削除です。
+> query-replace の `y/n/!/q` 確認は従来どおり文字入力です。
 
 **Query Replace 中のキー:**
 

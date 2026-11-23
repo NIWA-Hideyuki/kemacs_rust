@@ -103,6 +103,61 @@ impl TerminalIo {
             }
         }
     }
+    /// プロンプトの共通実装。esc_accept が真なら ESC も確定キーとして扱う。
+    fn prompt_inner(
+        &mut self,
+        prompt: &str,
+        default: Option<&str>,
+        esc_accept: bool,
+    ) -> Option<String> {
+        let mut buf = String::new();
+        if let Some(d) = default {
+            buf.push_str(d);
+        }
+        let mut out = io::stdout();
+        let _ = crossterm::execute!(out, Show);
+        loop {
+            let _ = crossterm::queue!(
+                out,
+                MoveTo(
+                    0,
+                    terminal::size().map_or(24, |(_, r)| r).saturating_sub(1) as u16
+                ),
+                Print(format!("{}{}", prompt, buf)),
+                Clear(ClearType::UntilNewLine)
+            );
+            let _ = out.flush();
+            let k = self.next_key();
+            if k == ctl(b'G') {
+                return None;
+            }
+            // 検索・置換のキーワード入力は ESC のみで確定する (改行は確定しない)。
+            // ESC 前置のメタキーは next_key が別のキーとして返すので、ここには来ない。
+            let accepted = if esc_accept {
+                k == ctl(b'[')
+            } else {
+                k == ctl(b'M') || k == b'\r' as Ckey || k == b'\n' as Ckey
+            };
+            if accepted {
+                break;
+            }
+            // ESC 確定モードでは改行を無視する (文字として挿入しない)。
+            if esc_accept && (k == ctl(b'M') || k == b'\r' as Ckey || k == b'\n' as Ckey) {
+                continue;
+            }
+            if k == ctl(b'H') || k == 8 || k == 127 {
+                buf.pop();
+                continue;
+            }
+            let c = code(k);
+            if c >= 0x20 {
+                if let Some(ch) = char::from_u32(c as u32) {
+                    buf.push(ch);
+                }
+            }
+        }
+        Some(buf)
+    }
 }
 
 /// crossterm のキーを C 版のキーコードへ変換する (ebind.H_ の割当てに合わせる)。
@@ -143,42 +198,11 @@ pub fn map_key(code: KeyCode, modifiers: KeyModifiers) -> Ckey {
 
 impl EditorIo for TerminalIo {
     fn prompt(&mut self, prompt: &str, default: Option<&str>) -> Option<String> {
-        let mut buf = String::new();
-        if let Some(d) = default {
-            buf.push_str(d);
-        }
-        let mut out = io::stdout();
-        let _ = crossterm::execute!(out, Show);
-        loop {
-            let _ = crossterm::queue!(
-                out,
-                MoveTo(
-                    0,
-                    terminal::size().map_or(24, |(_, r)| r).saturating_sub(1) as u16
-                ),
-                Print(format!("{}{}", prompt, buf)),
-                Clear(ClearType::UntilNewLine)
-            );
-            let _ = out.flush();
-            let k = self.next_key();
-            if k == ctl(b'G') {
-                return None;
-            }
-            if k == ctl(b'M') || k == b'\r' as Ckey || k == b'\n' as Ckey {
-                break;
-            }
-            if k == ctl(b'H') || k == 8 || k == 127 {
-                buf.pop();
-                continue;
-            }
-            let c = code(k);
-            if c >= 0x20 {
-                if let Some(ch) = char::from_u32(c as u32) {
-                    buf.push(ch);
-                }
-            }
-        }
-        Some(buf)
+        self.prompt_inner(prompt, default, false)
+    }
+
+    fn prompt_accept_esc(&mut self, prompt: &str, default: Option<&str>) -> Option<String> {
+        self.prompt_inner(prompt, default, true)
     }
 
     fn prompt_secret(&mut self, prompt: &str) -> Option<String> {

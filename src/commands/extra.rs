@@ -186,7 +186,7 @@ pub fn setvar(ed: &mut Editor) -> Status {
 
 pub fn search_cmd(ed: &mut Editor, reverse: bool, _f: bool, n: i32) -> Status {
     let default = String::from_utf8_lossy(&ed.search_pattern).to_string();
-    let Some(ans) = ed.prompt(
+    let Some(ans) = ed.prompt_accept_esc(
         if reverse {
             "Search backward: "
         } else {
@@ -334,13 +334,13 @@ pub fn isearch(ed: &mut Editor, reverse: bool) -> Status {
 
 pub fn replace_cmd(ed: &mut Editor, query: bool) -> Status {
     let prev = String::from_utf8_lossy(&ed.search_pattern).to_string();
-    let Some(from) = ed.prompt("Replace string: ", Some(&prev)) else {
+    let Some(from) = ed.prompt_accept_esc("Replace string: ", Some(&prev)) else {
         return St::False;
     };
     if from.is_empty() {
         return St::False;
     }
-    let Some(to) = ed.prompt("with: ", None) else {
+    let Some(to) = ed.prompt_accept_esc("with: ", None) else {
         return St::False;
     };
     let pat = from.into_bytes();

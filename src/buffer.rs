@@ -131,7 +131,9 @@ impl Buffer {
             dot: Pos::default(),
             mark: None,
             mode: 0,
-            flags: BFINVS,
+            // 既定は可視バッファ。BFINVS は一時バッファ用で、ここで付けると
+            // quit() の未保存確認から漏れてしまう。
+            flags: 0,
             nwnd: 0,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -783,6 +785,16 @@ impl Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_buffer_is_visible_and_quit_can_see_it() {
+        let b = Buffer::new("main");
+        assert_eq!(b.flags & BFINVS, 0);
+        let mut b = b;
+        b.insert_bytes(b"x");
+        assert_ne!(b.flags & BFCHG, 0);
+        assert_eq!(b.flags & BFINVS, 0);
+    }
 
     #[test]
     fn encoded_roundtrip() {

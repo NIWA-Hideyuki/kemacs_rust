@@ -22,6 +22,10 @@ pub trait EditorIo {
     fn yesno(&mut self, prompt: &str) -> bool;
     /// 生のキーストロークを 1 つ読む (プレフィックス処理は Editor 側)。
     fn read_key(&mut self) -> Ckey;
+    /// ESC も確定キーとして受け付けるプロンプト (検索・置換用)。
+    fn prompt_accept_esc(&mut self, prompt: &str, default: Option<&str>) -> Option<String> {
+        self.prompt(prompt, default)
+    }
     /// 指定時間だけ待ってキーを読む。無ければ None。
     /// プレビュー出力を待つ間も描画を更新するために使う。
     fn read_key_timeout(&mut self, _timeout: std::time::Duration) -> Option<Ckey> {
@@ -414,6 +418,18 @@ impl Editor {
             Some(a)
         } else {
             self.io.prompt(prompt, default)
+        };
+        self.prompt_depth -= 1;
+        answer
+    }
+
+    /// 検索・置換のキーワード入力。ESC でも確定できる。
+    pub fn prompt_accept_esc(&mut self, prompt: &str, default: Option<&str>) -> Option<String> {
+        self.prompt_depth += 1;
+        let answer = if let Some(a) = self.macro_args.pop_front() {
+            Some(a)
+        } else {
+            self.io.prompt_accept_esc(prompt, default)
         };
         self.prompt_depth -= 1;
         answer
