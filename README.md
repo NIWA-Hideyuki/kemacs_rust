@@ -81,8 +81,7 @@ cargo clippy --all-targets -- -D warnings
   置換、undo / redo。
 - C Mode / Python Mode / Markdown Mode の自動インデント、Markdown conceal、
   外部プレビュー、行番号ガーター、カラー表示。
-- SGR 1006 マウス (ドラッグ選択・ダブルクリック・ホイール)、差分描画、
-  リサイズ時の全描画。
+- 差分描画、リサイズ時の全描画。
 - シェル実行、autosave、パスワード非エコー入力、C 互換の弱暗号と
   XChaCha20-Poly1305 + PBKDF2 の強暗号。
 
@@ -91,7 +90,7 @@ cargo clippy --all-targets -- -D warnings
 - [`docs/kemacs使用手引書.md`](docs/kemacs使用手引書.md) — キー操作・設定・コマンドの総合手引書
 - [`docs/Rust移植.md`](docs/Rust移植.md) — 実装範囲・未移植項目・ビルド方法
 - [`docs/rust版とC言語版の違い.md`](docs/rust版とC言語版の違い.md) — 使い方・外観の比較
-- [`docs/all_test_item_list.md`](docs/all_test_item_list.md) — `cargo test` の全142件のテスト項目
+- [`docs/all_test_item_list.md`](docs/all_test_item_list.md) — `cargo test` の全134件のテスト項目
 - [`docs/cmode使用法.md`](docs/cmode使用法.md) — C Mode
 - [`docs/Python_mode使用法.md`](docs/Python_mode使用法.md) — Python Mode
 - [`docs/Markdown_mode使用法.md`](docs/Markdown_mode使用法.md) — Markdown Mode

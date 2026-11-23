@@ -156,36 +156,3 @@ mod tests {
         assert_eq!(cmdstr(DEL as Ckey), "<127>");
     }
 }
-
-/// マウスイベント用のキーコード (通常のキーと衝突しない 0xF0000000 台)。
-pub const MOUSE_PREFIX: Ckey = 0xf000_0000;
-
-pub fn mouse_key(kind: u8, col: u16, row: u16) -> Ckey {
-    MOUSE_PREFIX | ((kind as Ckey) << 20) | ((col as Ckey) << 8) | (row as Ckey)
-}
-
-pub fn is_mouse(k: Ckey) -> bool {
-    k & 0xf000_0000 == MOUSE_PREFIX
-}
-
-/// (種別, 列, 行) を取り出す。種別: 0=左クリック, 1=ドラッグ, 2=ホイール上, 3=ホイール下。
-pub fn mouse_parts(k: Ckey) -> (u8, u16, u16) {
-    (
-        ((k >> 20) & 0xff) as u8,
-        ((k >> 8) & 0xfff) as u16,
-        (k & 0xff) as u16,
-    )
-}
-
-#[cfg(test)]
-mod mouse_tests {
-    use super::*;
-
-    #[test]
-    fn mouse_encoding() {
-        let k = mouse_key(0, 80, 24);
-        assert!(is_mouse(k));
-        assert_eq!(mouse_parts(k), (0, 80, 24));
-        assert!(!is_mouse(ctl(b'A')));
-    }
-}

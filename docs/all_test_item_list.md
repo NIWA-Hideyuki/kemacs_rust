@@ -11,16 +11,16 @@
 
 | テスト種別 | 置き場所 | テスト数 | 結果 | 対象 |
 |---|---|---|---|---|
-| 単体テスト | `src/*.rs` (14 ファイル) | 74 | 74 成功 / 0 失敗 | バッファ・エンコーディング・検索・正規表現・大小文字畳み込み・スクリプト・各モード・描画・入力・キーコード・コマンド・暗号・システム |
-| 結合テスト | `tests/rust_core.rs` | 30 | 30 成功 / 0 失敗 | キー操作シーケンス、ファイル形式 (SJIS / CRLF / 暗号)、マウス、ウィンドウ、キーボードマクロ |
+| 単体テスト | `src/*.rs` (14 ファイル) | 70 | 70 成功 / 0 失敗 | バッファ・エンコーディング・検索・正規表現・大小文字畳み込み・スクリプト・各モード・描画・入力・キーコード・コマンド・暗号・システム |
+| 結合テスト | `tests/rust_core.rs` | 26 | 26 成功 / 0 失敗 | キー操作シーケンス、ファイル形式 (SJIS / CRLF / 暗号)、ウィンドウ、キーボードマクロ |
 | 差分テスト | `tests/rust_parity.rs` | 38 | 38 成功 / 0 失敗 | C 版との互換性 (32bit 境界、文字コード往復、行・undo ストレス、各モードの端数、検索境界、レビュー回帰) |
 
-> **合計: 142 件のテスト — 全テスト合格 (exit code 0)**
+> **合計: 134 件のテスト — 全テスト合格 (exit code 0)**
 > 実行コマンド: **`cargo test`**
 
 ---
 
-## 1. 単体テスト — `src/*.rs` (74 件)
+## 1. 単体テスト — `src/*.rs` (70 件)
 
 各モジュールに `#[cfg(test)]` と `#[test]` で定義されたテスト。カテゴリ別の内訳は次のとおり。
 
@@ -33,14 +33,14 @@
 | 5 | `src/casefold.rs` | 3 | 全角記号・かな・数字の畳み込みとバイト位置マッピング |
 | 6 | `src/script.rs` | 8 | トークン化、変数・関数、`!if` 入れ子、ラベル、再帰上限、`&getkey` |
 | 7 | `src/modes.rs` | 13 | C / Python / Markdown 各モードの挿入・インデント・構造編集 |
-| 8 | `src/display.rs` | 6 | 差分描画、conceal、全角クリック位置、モードライン、巨大画面幅 |
-| 9 | `src/input.rs` | 3 | `C-` / `M-` マッピング、リサイズ、SGR 1006 マウスイベント |
-| 10 | `src/keycode.rs` | 3 | キーコード定数、キー列名書式、マウスキーエンコード |
+| 8 | `src/display.rs` | 5 | 差分描画、conceal、モードライン、巨大画面幅 |
+| 9 | `src/input.rs` | 2 | `C-` / `M-` マッピング、リサイズ |
+| 10 | `src/keycode.rs` | 2 | キーコード定数、キー列名書式 |
 | 11 | `src/commands.rs` | 4 | キー割当て、kill / yank、リージョン、`C-U` 数値引数 |
-| 12 | `src/editor.rs` | 2 | 単語境界、キー名パース |
+| 12 | `src/editor.rs` | 1 | キー名パース |
 | 13 | `src/crypt.rs` | 3 | クラシック暗号の対合性、強暗号の往復・改ざん検出 |
 | 14 | `src/system.rs` | 4 | シェルエスケープ、自動保存、出力取り込み、プレビュー寿命 |
-| | **合計** | **74** | |
+| | **合計** | **70** | |
 
 ### 1.1. `src/buffer.rs` — バッファ行操作 (9 件)
 
@@ -126,32 +126,29 @@
 | 12 | `py_insert_and_indent` | Python モード: 挿入とコロンによるインデント |
 | 13 | `py_backspace_dedents_one_level` | Python モード: バックスペースで 1 段デデント |
 
-### 1.8. `src/display.rs` — 画面描画 (6 件)
+### 1.8. `src/display.rs` — 画面描画 (5 件)
 
 | # | テスト関数 | 検証内容 |
 |---|---|---|
-| 1 | `click_offset_with_wide_chars` | 全角文字を含む行のクリック桁 → バイト位置 |
-| 2 | `markdown_conceal_hides_emphasis` | Markdown conceal で強調記号を非表示化 |
-| 3 | `only_modified_rows_change` | 変更行だけが差分描画の対象になる |
-| 4 | `color_change_forces_full_redraw` | 色変更時に全体再描画へ切り替わる |
-| 5 | `huge_screen_width_does_not_allocate` | 巨大な画面幅でも過大なメモリを確保しない |
-| 6 | `c_style_default_modeline` | 既定のモードライン書式 |
+| 1 | `markdown_conceal_hides_emphasis` | Markdown conceal で強調記号を非表示化 |
+| 2 | `only_modified_rows_change` | 変更行だけが差分描画の対象になる |
+| 3 | `color_change_forces_full_redraw` | 色変更時に全体再描画へ切り替わる |
+| 4 | `huge_screen_width_does_not_allocate` | 巨大な画面幅でも過大なメモリを確保しない |
+| 5 | `c_style_default_modeline` | 既定のモードライン書式 |
 
-### 1.9. `src/input.rs` — キー入力 (3 件)
+### 1.9. `src/input.rs` — キー入力 (2 件)
 
 | # | テスト関数 | 検証内容 |
 |---|---|---|
 | 1 | `map_ctrl_and_meta` | `C-` / `M-` (ESC) のキーマッピング |
 | 2 | `apply_resize_updates_window_rows` | リサイズイベントでウィンドウ行数を再配分 |
-| 3 | `mouse_event_mapping` | SGR 1006 マウスイベントのマッピング |
 
-### 1.10. `src/keycode.rs` — キーコード (3 件)
+### 1.10. `src/keycode.rs` — キーコード (2 件)
 
 | # | テスト関数 | 検証内容 |
 |---|---|---|
 | 1 | `key_codes_match_c_version` | キーコード定数が C 版と同じ値 |
 | 2 | `cmdstr_format` | キー列名の書式 |
-| 3 | `mouse_encoding` | マウスキーのエンコード |
 
 ### 1.11. `src/commands.rs` — コマンド (4 件)
 
@@ -162,12 +159,11 @@
 | 3 | `mark_region_copy_and_kill` | マーク・リージョン・コピー・kill |
 | 4 | `universal_argument_flow` | `C-U` 数値引数の流れ |
 
-### 1.12. `src/editor.rs` — エディタ状態 (2 件)
+### 1.12. `src/editor.rs` — エディタ状態 (1 件)
 
 | # | テスト関数 | 検証内容 |
 |---|---|---|
-| 1 | `mouse_word_bounds_ascii_and_multibyte` | ASCII とマルチバイト文字の単語境界 |
-| 2 | `parse_key_names` | キー名文字列のパース |
+| 1 | `parse_key_names` | キー名文字列のパース |
 
 ### 1.13. `src/crypt.rs` — 暗号化 (3 件)
 
@@ -188,7 +184,7 @@
 
 ---
 
-## 2. 結合テスト — `tests/rust_core.rs` (30 件)
+## 2. 結合テスト — `tests/rust_core.rs` (26 件)
 
 `ScriptedIo` でキー入力とプロンプト応答を差し込んだ `Editor` を組み立て、キー操作から
 ファイル保存・終了までを通しで検証する。C 版のキー操作・ファイル形式を維持していることを確認する。
@@ -211,20 +207,16 @@
 | 14 | `encrypted_file_roundtrip` | 暗号化ファイルの保存と `Cipher` による復号 |
 | 15 | `autosave_writes_backup_file` | 自動保存で `#ファイル名#` が書き出される |
 | 16 | `pipe_and_filter_commands` | `pipecmd` の出力取り込みと `filter` の変換 |
-| 17 | `mouse_click_and_scroll` | 左クリックでカーソル移動、ホイールで行スクロール |
-| 18 | `color_commands_and_variables` | `set-fcolor` / `set-bcolor` と `$fcolor` / `$bcolor` |
-| 19 | `c_mode_enter_and_reindent_through_keys` | C モードの `{` インデントと `M-J` 再インデント |
-| 20 | `py_mode_enter_indent_and_backspace` | Python モードの `:` インデントとバックスペース |
-| 21 | `md_mode_list_continuation_and_tab` | Markdown 箇条書きの継続とタブによるインデント |
-| 22 | `automode_by_file_extension` | `.py` ファイルで PYMODE が自動有効になる |
-| 23 | `strong_encryption_roundtrip` | XChaCha20-Poly1305 の往復と誤パスワード時の非復号 |
-| 24 | `preview_reads_pipe_incrementally` | プレビューのパイプ逐次読み取りと完了メッセージ |
-| 25 | `display_diff_skips_unchanged_rows` | 差分描画が変更行だけを対象にする |
-| 26 | `mouse_double_click_selects_word` | ダブルクリックで単語を選択 |
-| 27 | `mouse_drag_creates_region_from_press_point` | ドラッグで押下点からのリージョンを作成 |
-| 28 | `mouse_shift_click_extends_region` | Shift+クリックでリージョンを延長 |
-| 29 | `window_positions_are_independent` | 同じバッファを複数ウィンドウで表示しても dot が独立 |
-| 30 | `script_getkey_in_condition` | `!if &sequal &getkey a` の条件評価 |
+| 17 | `color_commands_and_variables` | `set-fcolor` / `set-bcolor` と `$fcolor` / `$bcolor` |
+| 18 | `c_mode_enter_and_reindent_through_keys` | C モードの `{` インデントと `M-J` 再インデント |
+| 19 | `py_mode_enter_indent_and_backspace` | Python モードの `:` インデントとバックスペース |
+| 20 | `md_mode_list_continuation_and_tab` | Markdown 箇条書きの継続とタブによるインデント |
+| 21 | `automode_by_file_extension` | `.py` ファイルで PYMODE が自動有効になる |
+| 22 | `strong_encryption_roundtrip` | XChaCha20-Poly1305 の往復と誤パスワード時の非復号 |
+| 23 | `preview_reads_pipe_incrementally` | プレビューのパイプ逐次読み取りと完了メッセージ |
+| 24 | `display_diff_skips_unchanged_rows` | 差分描画が変更行だけを対象にする |
+| 25 | `window_positions_are_independent` | 同じバッファを複数ウィンドウで表示しても dot が独立 |
+| 26 | `script_getkey_in_condition` | `!if &sequal &getkey a` の条件評価 |
 
 ---
 
@@ -311,13 +303,13 @@ C 版の各テスト項目を Rust 版に照合して追加した回帰テスト
 
 ## 4. 構成 / 実行フロー
 
-1. `cargo test` を実行すると、まず単体テスト (`src/lib.rs` = 74 件、`src/main.rs` = 0 件) が動く
-2. 次に `tests/rust_core.rs` (30 件) が動く
+1. `cargo test` を実行すると、まず単体テスト (`src/lib.rs` = 70 件、`src/main.rs` = 0 件) が動く
+2. 次に `tests/rust_core.rs` (26 件) が動く
 3. 次に `tests/rust_parity.rs` (38 件) が動く
 4. 最後に doc テスト (`Doc-tests kemacs`, 0 件) が動く
 
 ```sh
-cargo test                       # 全 142 件を実行
+cargo test                       # 全 134 件を実行
 cargo test -- --nocapture        # 失敗時に出力を表示
 cargo test key_sequence          # 名前を指定して絞り込み
 ```

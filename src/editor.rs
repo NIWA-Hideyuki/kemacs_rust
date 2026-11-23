@@ -8,7 +8,6 @@ use crate::commands;
 use crate::encoding::{Code, Eol};
 pub use crate::keycode::Status;
 use crate::keycode::{ctl, ctlx, ctlxlctl, Ckey, CTLFLG, META};
-use crate::keycode::{is_mouse, mouse_parts};
 use crate::system::PreviewState;
 
 /// 画面 I/O の抽象化。端末実装 (`input.rs`) とテスト用スクリプト実装を差し替える。
@@ -127,8 +126,6 @@ pub struct Editor {
     pub mode_line_format: String,
     /// C-P / C-N の縦移動で保持する目的列。
     pub curgoal: usize,
-    /// マウスドラッグの起点 (リージョンのアンカー)。
-    pub mouse_anchor: Option<crate::buffer::Pos>,
     /// ウィンドウ×バッファごとのカーソル位置 (C 版 w_dotp/w_doto 相当)。
     pub window_pos: Vec<HashMap<usize, (crate::buffer::Pos, Option<crate::buffer::Pos>)>>,
     /// 最後に位置を保存した (ウィンドウ, バッファ)。
@@ -234,7 +231,6 @@ impl Editor {
             search_reverse: false,
             mode_line_format: "== %p %v (%m) == %b == File: %F == %c %-".to_string(),
             curgoal: 0,
-            mouse_anchor: None,
             window_pos: vec![HashMap::new()],
             last_saved_win_buf: Some((0, 0)),
             global_mode: 0,
@@ -376,81 +372,6 @@ impl Editor {
     }
     pub fn resume_terminal(&mut self) {
         self.io.resume_terminal();
-    }
-
-    /// マウスイベントを処理したら true を返す (C 版の mouse 処理に相当)。
-    /// kind: 0=left down, 1=drag, 2/3=wheel, 4=double click,
-    /// 5=shift click, 6=right click (mark), 7=up, 8=middle down。
-    pub fn handle_mouse(&mut self, k: Ckey) -> bool {
-        if !is_mouse(k) {
-            return false;
-        }
-        let (kind, col, row) = mouse_parts(k);
-        let gutter = if self.show_line_numbers {
-            self.line_number_width.min(8)
-        } else {
-            0
-        };
-        let text_col = col.saturating_sub(1).saturating_sub(gutter as u16) as usize;
-        let li = self.window().top + row.saturating_sub(1) as usize;
-        if kind == 2 || kind == 3 {
-            let delta = if kind == 2 { -1i64 } else { 1i64 };
-            let li = (self.buffer().dot.line as i64 + delta)
-                .clamp(0, self.buffer().lines.len().saturating_sub(1) as i64)
-                as usize;
-            self.buffer_mut().dot.line = li;
-            let rows = self.window().rows;
-            if li < self.window().top {
-                self.window_mut().top = li;
-            } else if li >= self.window().top + rows {
-                self.window_mut().top = li.saturating_sub(rows - 1);
-            }
-            return true;
-        }
-        if kind == 7 {
-            self.mouse_anchor = None;
-            return true;
-        }
-        if li >= self.buffer().lines.len() {
-            return true;
-        }
-        let line = self.buffer().lines[li].clone();
-        let off = crate::display::offset_at_col(&line, text_col, self.tabsize);
-        let p = crate::buffer::Pos::new(li, off);
-        match kind {
-            4 => {
-                // ダブルクリック: 単語 (または記号 1 文字) を選択
-                let (a, b) = mouse_word_bounds(&line, off);
-                self.buffer_mut().mark = Some(crate::buffer::Pos::new(li, a));
-                self.buffer_mut().dot = crate::buffer::Pos::new(li, b);
-                self.mouse_anchor = None;
-            }
-            5 => {
-                // Shift+クリック: 既存の mark を起点にリージョンを延長
-                if self.buffer().mark.is_none() {
-                    self.buffer_mut().mark = Some(self.buffer().dot);
-                }
-                self.buffer_mut().dot = p;
-            }
-            6 => {
-                // 右クリック: クリック位置に mark を設定 (dot は動かさない)
-                self.buffer_mut().mark = Some(p);
-            }
-            8 => {
-                self.buffer_mut().dot = p;
-            }
-            _ => {
-                let anchor = if kind == 1 {
-                    self.mouse_anchor.unwrap_or(p)
-                } else {
-                    p
-                };
-                self.mouse_anchor = Some(anchor);
-                self.buffer_mut().mark = Some(anchor);
-                self.buffer_mut().dot = p;
-            }
-        }
-        true
     }
 
     /// 1 文字挿入ごとの自動保存チェック (C 版 execute() の ASAVE 部分)。
@@ -699,26 +620,6 @@ impl Editor {
 impl Editor {}
 
 /// `cmdstr()` 形式のキー名を Ckey に変換する。
-/// ダブルクリック用の単語境界。
-fn mouse_word_bounds(line: &[u8], off: usize) -> (usize, usize) {
-    let is_word = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c >= 0x80;
-    if off < line.len() && !is_word(line[off]) {
-        return (off, off + 1);
-    }
-    let mut a = off.min(line.len());
-    while a > 0 && is_word(line[a - 1]) {
-        a -= 1;
-    }
-    let mut b = off.min(line.len());
-    while b < line.len() && is_word(line[b]) {
-        b += 1;
-    }
-    if a == b && off < line.len() {
-        return (off, off + 1);
-    }
-    (a, b)
-}
-
 fn parse_key_name(name: &str) -> Option<Ckey> {
     let mut k: Ckey = 0;
     let mut rest = name.trim();
@@ -757,13 +658,6 @@ fn parse_key_name(name: &str) -> Option<Ckey> {
 #[cfg(test)]
 mod editor_tests {
     use super::*;
-
-    #[test]
-    fn mouse_word_bounds_ascii_and_multibyte() {
-        assert_eq!(mouse_word_bounds(b"foo bar", 2), (0, 3));
-        assert_eq!(mouse_word_bounds("日本 語".as_bytes(), 3), (0, 6));
-        assert_eq!(mouse_word_bounds(b"a.b", 1), (1, 2));
-    }
 
     #[test]
     fn parse_key_names() {

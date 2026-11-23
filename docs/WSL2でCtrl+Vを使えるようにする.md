@@ -120,8 +120,8 @@ TERM=xterm-256color kemacs somefile.txt
 ## 関連ソース (Rust 版)
 
 - `src/input.rs`: 端末の raw モード設定とキー入力を担当します。Rust 版は **crossterm** を
-  使って端末を raw モードに切り替え、キーイベント・リサイズイベント・SGR 1006 のマウス
-  イベントを読み取ります。crossterm は `Ctrl+V` を「貼り付け」として特別扱いせず、端末から
+  使って端末を raw モードに切り替え、キーイベント・リサイズイベントを読み取ります。
+  crossterm は `Ctrl+V` を「貼り付け」として特別扱いせず、端末から
   届いたキーをそのまま kemacs のキー割当てへ渡します。したがって `^V` が届かない原因は
   kemacs 側ではなく、セクション 1 / 2 の Windows 側ターミナル設定にあります。
 - `src/keycode.rs`: キーコード (`CTLFLG` / `META` / `CTLX` / `SPEC`) と `C-` / `M-` /

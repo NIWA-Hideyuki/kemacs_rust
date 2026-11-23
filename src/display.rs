@@ -377,49 +377,6 @@ pub fn frame(ed: &mut Editor) -> Frame {
     }
 }
 
-/// 画面上の桁位置から行内のバイトオフセットを求める (マウスクリック用)。
-pub fn offset_at_col(bytes: &[u8], target_col: usize, tabsize: usize) -> usize {
-    let mut off = 0usize;
-    let mut col = 0usize;
-    while off < bytes.len() {
-        let width = if bytes[off] == b'\t' {
-            let ts = tabsize.max(1);
-            ts - col % ts
-        } else {
-            let clen = char_len(&bytes[off..]);
-            let s = String::from_utf8_lossy(&bytes[off..off + clen]);
-            s.chars()
-                .next()
-                .and_then(unicode_width::UnicodeWidthChar::width)
-                .unwrap_or(1)
-        };
-        if col + width > target_col {
-            break;
-        }
-        col += width;
-        if bytes[off] == b'\t' {
-            off += 1;
-        } else {
-            off += char_len(&bytes[off..]);
-        }
-    }
-    off
-}
-
-#[cfg(test)]
-mod col_tests {
-    use super::*;
-
-    #[test]
-    fn click_offset_with_wide_chars() {
-        let line = "A漢B".as_bytes();
-        assert_eq!(offset_at_col(line, 0, 8), 0);
-        assert_eq!(offset_at_col(line, 1, 8), 1);
-        assert_eq!(offset_at_col(line, 2, 8), 1);
-        assert_eq!(offset_at_col(line, 3, 8), 4);
-    }
-}
-
 /// 前フレームと比べて書き換える必要のある行番号 (C 版 updpos/update 相当)。
 pub fn changed_rows(prev: Option<&Frame>, cur: &Frame) -> Vec<usize> {
     match prev {

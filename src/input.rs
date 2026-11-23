@@ -4,13 +4,9 @@ use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
 
 use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers, MouseButton, MouseEventKind,
-};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::style::{
     Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
 };
@@ -18,7 +14,7 @@ use crossterm::terminal::{self, Clear, ClearType};
 
 use crate::display::{self, Frame};
 use crate::editor::{Editor, EditorIo};
-use crate::keycode::{code, ctl, meta, metac_ctl, mouse_key, spec, Ckey, DEL};
+use crate::keycode::{code, ctl, meta, metac_ctl, spec, Ckey, DEL};
 
 /// crossterm の Resize イベント受領フラグ。
 static RESIZE_PENDING: AtomicBool = AtomicBool::new(false);
@@ -28,7 +24,6 @@ pub const RESIZE_KEY: Ckey = 0x0E00_0000;
 
 pub struct TerminalIo {
     keys: Mutex<VecDeque<Ckey>>,
-    last_click: Mutex<Option<(Instant, u16, u16)>>,
 }
 
 impl Default for TerminalIo {
@@ -41,7 +36,6 @@ impl TerminalIo {
     pub fn new() -> Self {
         TerminalIo {
             keys: Mutex::new(VecDeque::new()),
-            last_click: Mutex::new(None),
         }
     }
 
@@ -66,42 +60,6 @@ impl TerminalIo {
                 continue;
             }
             match event::read() {
-                Ok(Event::Mouse(m)) => {
-                    let shift = m.modifiers.contains(KeyModifiers::SHIFT);
-                    let kind = match m.kind {
-                        MouseEventKind::Down(button) => match button {
-                            MouseButton::Right => 6,
-                            MouseButton::Middle => 8,
-                            MouseButton::Left if shift => 5,
-                            MouseButton::Left => {
-                                let now = Instant::now();
-                                let mut last =
-                                    self.last_click.lock().unwrap_or_else(|e| e.into_inner());
-                                let dbl = (*last).is_some_and(|(t, c, r)| {
-                                    now.duration_since(t) < Duration::from_millis(400)
-                                        && c == m.column
-                                        && r == m.row
-                                });
-                                *last = if dbl {
-                                    None
-                                } else {
-                                    Some((now, m.column, m.row))
-                                };
-                                if dbl {
-                                    4
-                                } else {
-                                    0
-                                }
-                            }
-                        },
-                        MouseEventKind::Drag(_) => 1,
-                        MouseEventKind::Up(_) => 7,
-                        MouseEventKind::ScrollUp => 2,
-                        MouseEventKind::ScrollDown => 3,
-                        _ => 0xff,
-                    };
-                    return mouse_key(kind, m.column, m.row);
-                }
                 Ok(Event::Key(KeyEvent {
                     code: KeyCode::Char(ch),
                     modifiers,
@@ -352,12 +310,10 @@ pub fn draw(frame: &Frame) -> io::Result<()> {
 }
 
 pub fn enable() -> io::Result<()> {
-    terminal::enable_raw_mode()?;
-    crossterm::execute!(io::stdout(), EnableMouseCapture)
+    terminal::enable_raw_mode()
 }
 
 pub fn disable() -> io::Result<()> {
-    let _ = crossterm::execute!(io::stdout(), DisableMouseCapture);
     terminal::disable_raw_mode()
 }
 
@@ -400,9 +356,6 @@ pub fn run(ed: &mut Editor) -> io::Result<()> {
         prev = Some(f);
         let k = ed.read_key();
         if k == RESIZE_KEY {
-            continue;
-        }
-        if ed.handle_mouse(k) {
             continue;
         }
         if let Some((k2, f, n)) = ed.feed_key(k) {
@@ -488,10 +441,5 @@ mod color_tests {
         assert_eq!(ed.screen_rows, 40);
         assert_eq!(ed.screen_cols, 100);
         assert_eq!(ed.window().rows, 38);
-    }
-
-    #[test]
-    fn mouse_event_mapping() {
-        assert_eq!(mouse_key(0, 5, 10), 0xf000_0000 | (5 << 8) | 10);
     }
 }

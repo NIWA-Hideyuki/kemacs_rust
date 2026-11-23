@@ -6,7 +6,7 @@ use kemacs::buffer::Pos;
 use kemacs::display;
 use kemacs::editor::{Editor, Status};
 use kemacs::input::ScriptedIo;
-use kemacs::keycode::{ctl, ctlx, ctlxlctl, mouse_key, Ckey};
+use kemacs::keycode::{ctl, ctlx, ctlxlctl, Ckey};
 
 fn feed(ed: &mut Editor, k: Ckey) -> Status {
     match ed.feed_key(k) {
@@ -353,20 +353,6 @@ fn pipe_and_filter_commands() {
 }
 
 #[test]
-fn mouse_click_and_scroll() {
-    let mut ed = Editor::new(Box::new(ScriptedIo::new()), 24, 80);
-    type_text(&mut ed, "abcdef");
-    ed.execute_named("newline", false, 1);
-    type_text(&mut ed, "ghijkl");
-    let k = kemacs::keycode::mouse_key(0, 5, 1); // 1 行目 5 桁目
-    assert!(ed.handle_mouse(k));
-    assert_eq!(ed.buffer().dot, Pos::new(0, 4));
-    let down = kemacs::keycode::mouse_key(3, 1, 1);
-    assert!(ed.handle_mouse(down));
-    assert_eq!(ed.buffer().dot.line, 1);
-}
-
-#[test]
 fn color_commands_and_variables() {
     let io = ScriptedIo::with_prompts(&["3", "10,20,30"]);
     let mut ed = Editor::new(Box::new(io), 24, 80);
@@ -499,40 +485,6 @@ fn display_diff_skips_unchanged_rows() {
         "unchanged row should not be redrawn: {:?}",
         rows
     );
-}
-
-#[test]
-fn mouse_double_click_selects_word() {
-    let mut ed = Editor::new(Box::new(ScriptedIo::new()), 24, 80);
-    ed.buffer_mut().insert_bytes(b"foo bar baz");
-    assert!(ed.handle_mouse(mouse_key(4, 3, 1)));
-    assert_eq!(ed.buffer().mark, Some(Pos::new(0, 0)));
-    assert_eq!(ed.buffer().dot, Pos::new(0, 3));
-}
-
-#[test]
-fn mouse_drag_creates_region_from_press_point() {
-    let mut ed = Editor::new(Box::new(ScriptedIo::new()), 24, 80);
-    ed.buffer_mut().insert_bytes(b"hello world");
-    assert!(ed.handle_mouse(mouse_key(0, 1, 1)));
-    assert_eq!(ed.buffer().mark, Some(Pos::new(0, 0)));
-    assert!(ed.handle_mouse(mouse_key(1, 7, 1)));
-    assert!(ed.handle_mouse(mouse_key(7, 7, 1)));
-    assert_eq!(ed.buffer().mark, Some(Pos::new(0, 0)));
-    assert_eq!(ed.buffer().dot, Pos::new(0, 6));
-}
-
-#[test]
-fn mouse_shift_click_extends_region() {
-    let mut ed = Editor::new(Box::new(ScriptedIo::new()), 24, 80);
-    ed.buffer_mut().insert_bytes(b"hello world");
-    ed.buffer_mut().dot = Pos::new(0, 5);
-    assert!(ed.handle_mouse(mouse_key(5, 1, 1)));
-    assert_eq!(ed.buffer().mark, Some(Pos::new(0, 5)));
-    assert_eq!(ed.buffer().dot, Pos::new(0, 0));
-    assert!(ed.handle_mouse(mouse_key(6, 7, 1)));
-    assert_eq!(ed.buffer().mark, Some(Pos::new(0, 6)));
-    assert_eq!(ed.buffer().dot, Pos::new(0, 0));
 }
 
 #[test]
