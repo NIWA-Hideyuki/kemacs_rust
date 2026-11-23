@@ -447,6 +447,25 @@ fn strong_encryption_roundtrip() {
 }
 
 #[test]
+fn md_preview_expands_percent_f_and_defaults_to_grip() {
+    let mut ed = Editor::new(Box::new(ScriptedIo::new()), 24, 80);
+    ed.buffers[0].fname = Some("README.md".to_string());
+    kemacs::script::set_bvar(&mut ed, "md-preview-command", "printf 'FILE=%f\\n'");
+    assert_eq!(ed.execute_named("md_preview", false, 1), Status::True);
+    for _ in 0..50 {
+        ed.preview_poll();
+        if ed.preview.as_ref().is_some_and(|p| p.finished) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let bi = ed.find_buffer("*Preview*").unwrap();
+    let text = String::from_utf8_lossy(&ed.buffers[bi].text()).into_owned();
+    assert!(text.contains("FILE=README.md"), "{}", text);
+    kemacs::system::preview_close(&mut ed);
+}
+
+#[test]
 fn preview_reads_pipe_incrementally() {
     let mut ed = Editor::new(Box::new(ScriptedIo::new()), 24, 80);
     let started =

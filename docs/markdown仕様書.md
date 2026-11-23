@@ -404,10 +404,10 @@ C 版の「行番号 → `gotoline()`」による逆引きは未移植。Rust �
 - 起動形式は `sh -c 'exec 2>&1; CMD'`。stdout / stderr を同じ pipe に繋ぎ、
   `preview_poll()` が非ブロック read で行を追記する。
 - 終了時は `[preview finished]` を追加。`*Preview*` は VIEW モード。
-- `$md-preview-command` が空のときは
-  `printf 'preview of <escaped-fname>\n'` にフォールバックする。
-- 未移植: `%f` のファイル名展開、未保存バッファの一時ファイル書き出し、
-  保存ごとの自動プレビュー (`$md-preview-on-save`)。
+- `$md-preview-command` の既定値は `grip %f` で、`%f` は現在のバッファの
+  ファイル名へシェルクォートされて展開される。
+- 未移植: 未保存バッファの一時ファイル書き出し、保存ごとの自動プレビュー
+  (`$md-preview-on-save`)。
 - `^C` は `preview_abort()` でコマンドを停止しバッファを閉じる。
 
 ### 4.10 表示のパフォーマンス
@@ -636,7 +636,7 @@ Rust 版では `src/editor.rs` の `Editor` フィールドとして保持し、
 | `$md-auto-pair` | bool | false | 強調記号を自動ペア |
 | `$md-conceal` | bool | false | 強調記号とリンク URL を非表示 |
 | `$md-heading-max` | usize | 6 | 見出しレベルの上限 |
-| `$md-preview-command` | str | (空) | プレビューコマンド (空なら `printf` にフォールバック) |
+| `$md-preview-command` | str | `grip %f` | プレビューコマンド (`%f` はファイル名へ展開) |
 
 **未移植の変数**: `$md-highlight`, `$md-list-bullets`, `$md-fence-lang`,
 `$md-preview-on-save`, `$md-table-align-on-save`。設定しても動作に影響しない。

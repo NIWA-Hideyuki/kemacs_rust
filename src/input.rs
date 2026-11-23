@@ -238,6 +238,25 @@ impl EditorIo for TerminalIo {
         self.next_key()
     }
 
+    fn read_key_timeout(&mut self, timeout: std::time::Duration) -> Option<Ckey> {
+        if let Some(queued) = self
+            .keys
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop_front()
+        {
+            return Some(queued);
+        }
+        if RESIZE_PENDING.load(Ordering::Relaxed) {
+            return Some(RESIZE_KEY);
+        }
+        match event::poll(timeout) {
+            Ok(true) => Some(self.next_key()),
+            Ok(false) => None,
+            Err(_) => Some(ctl(b'G')),
+        }
+    }
+
     fn suspend_terminal(&mut self) {
         let _ = terminal::disable_raw_mode();
     }
@@ -366,7 +385,21 @@ pub fn run(ed: &mut Editor) -> io::Result<()> {
         let f = display::frame(ed);
         draw_diff(prev.as_ref(), &f)?;
         prev = Some(f);
-        let k = ed.read_key();
+        // プレビュー実行中はキー待ちの間も 50ms ごとに出力を回収・描画する。
+        // これがないと grip の "Running on ..." がキーを押すまで出ない。
+        let k = if ed.preview.is_some() {
+            loop {
+                if let Some(k) = ed.io.read_key_timeout(std::time::Duration::from_millis(50)) {
+                    break k;
+                }
+                ed.preview_poll();
+                let f = display::frame(ed);
+                draw_diff(prev.as_ref(), &f)?;
+                prev = Some(f);
+            }
+        } else {
+            ed.read_key()
+        };
         if k == RESIZE_KEY {
             continue;
         }

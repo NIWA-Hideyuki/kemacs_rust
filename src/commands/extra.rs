@@ -83,6 +83,9 @@ pub fn quit(ed: &mut Editor, f: bool) -> Status {
         .iter()
         .any(|b| b.flags & BFCHG != 0 && b.flags & BFINVS == 0);
     if f || !dirty || ed.yesno("Modified buffers exist. Leave anyway") {
+        // 実行中のプレビューを止め、grip 等がポートを掴んだまま
+        // 残留しないようにする (C 版 quit() の preview_close() 相当)。
+        crate::system::preview_close(ed);
         ed.quit = true;
         St::True
     } else {
@@ -923,17 +926,25 @@ pub fn dispatch(ed: &mut Editor, name: &str, f: bool, n: i32) -> Status {
             St::True
         }
         "md_preview" => {
-            let cmd = crate::script::get_bvar(ed, "md-preview-command")
+            let template = crate::script::get_bvar(ed, "md-preview-command")
                 .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| {
-                    let fname = ed.buffer().fname.clone().unwrap_or_default();
-                    format!(
-                        "printf 'preview of {}\n'",
-                        crate::system::shell_escape(&fname)
-                    )
-                });
+                // 既定で grip を使う。%f は現在のバッファのファイル名へ展開する。
+                .unwrap_or_else(|| "grip %f".to_string());
+            let cmd = if template.contains("%f") {
+                let Some(fname) = ed.buffer().fname.as_deref() else {
+                    ed.mlwrite("Preview needs a file name (save the buffer first)");
+                    return St::False;
+                };
+                template.replace("%f", &crate::system::shell_escape(fname))
+            } else {
+                template
+            };
             let bname = "*Preview*".to_string();
-            crate::system::preview_start(ed, &cmd, &bname)
+            let st = crate::system::preview_start(ed, &cmd, &bname);
+            if st == St::True {
+                crate::system::preview_wait_first(ed);
+            }
+            st
         }
         "preview-close" => {
             crate::system::preview_close(ed);

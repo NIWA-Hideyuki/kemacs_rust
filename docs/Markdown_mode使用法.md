@@ -152,7 +152,7 @@ Rust 版の `$md-*` 変数は `src/editor.rs` の `Editor` フィールドに保
 | `$md-heading-max` | int | 6 | 見出しレベルの上限 |
 | `$md-conceal` | bool | FALSE | 強調記号とリンク URL を画面上だけ隠す |
 | `$md-auto-pair` | bool | FALSE | `*` `` ` `` `[` `_` `~` を対で挿入 |
-| `$md-preview-command` | str | (空) | プレビューコマンド。空なら `printf 'preview of <fname>\n'` を実行 |
+| `$md-preview-command` | str | `grip %f` | プレビューコマンド。`%f` はファイル名へ展開 |
 
 `C-X A` で「Variable to set: `md-indent-width`」「Value: `4`」のように入力します
 (先頭の `$` は自動的に取り除かれます)。`.kemacsrc` の自動読み込みは Rust 版には
@@ -474,12 +474,12 @@ URL: https://example.com/kemacs
 
 #### 7.10.1 grip の準備
 
-Rust 版には既定のプレビューコマンドが内蔵されていません
-(`$md-preview-command` の既定値は空で、その場合は
-`printf 'preview of <fname>\n'` が実行されます)。
-[grip](https://github.com/joeyespo/grip) を使う場合は `C-X A` で設定します。
-grip は GitHub の README 風スタイルで Markdown をブラウザに配信するツールで、
-ファイルが変更されると自動で再読み込みされます。
+`$md-preview-command` の既定値は `grip %f` で、ファイル名のバッファなら
+`M-Y` だけでプレビューが始まります (`%f` は現在のバッファのファイル名へ
+置換されます)。別のツールを使いたいときは `C-X A` で設定します。
+[grip](https://github.com/joeyespo/grip) は GitHub の README 風スタイルで
+Markdown をブラウザに配信するツールで、ファイルが変更されると自動で
+再読み込みされます。
 
 インストールは OS のパッケージ管理、または Python のパッケージ管理で行います。
 
@@ -504,11 +504,12 @@ grip --browser README.md  # サーバ起動後にブラウザを自動で開く
 grip --export README.md   # サーバを立てずに HTML を書き出す
 ```
 
-**重要**: Rust 版では `%f` のファイル名展開は未移植です。コマンド文字列に
-ファイル名を直接書いてください (例: `grip README.md`)。
+**`%f` は現在のバッファのファイル名に展開されます** (シェル用にクォート済み)。
+既定値 `grip %f` をそのまま使えば、ファイル名バッファで `M-Y` を押すだけです。
+別のファイルを指定したい場合は直接書いてください。
 
 ```
-C-X A → Variable to set: md-preview-command → Value: grip README.md
+C-X A → Variable to set: md-preview-command → Value: grip %f
 ```
 
 #### 7.10.2 プレビューを起動する
@@ -521,9 +522,11 @@ M-x md_preview       → 同じ
 - コマンドは `sh -c 'exec 2>&1; …'` で起動され、stdout / stderr は新しい
   `*Preview*` バッファにたまり、端末や編集中のバッファには出ません。
 - コマンドは非同期で動くので、`^C` を押したらすぐ編集に戻れます。
+- プレビュー出力はキー操作なしでも 50ms ごとにポールされ、`*Preview*`
+  バッファへ反映されます (`Running on http://localhost:6419` もすぐ表示されます)。
 - 実行中のコマンドは `M-Y` の再実行で停止してから起動し直されます。
 - Rust 版では未保存バッファを一時ファイルへ書き出す処理は未移植です
-  (`%f` も展開されません)。ファイル名バッファを対象にしてください。
+  ファイル名バッファを対象にしてください (`%f` はファイル名へ展開されます)。
 
 ブラウザを自動で開かせたいときは `--browser` を付けます。
 
@@ -566,11 +569,11 @@ grip はファイルが変更されると自動で再読み込みするため、
 #### 7.10.5 別のビューアを使う
 
 `$md-preview-command` を書き換えれば、grip 以外のコマンドも使えます。
-`%f` は展開されないので、ファイル名は直接記述します。
+`%f` はファイル名へ展開されるので、下記のように書けます。
 
 ```
-# pandoc で HTML に変換して開く (ファイル名を直接指定)
-Value: pandoc -s README.md -o README.html && xdg-open README.html
+# pandoc で HTML に変換して開く
+Value: pandoc -s %f -o README.html && xdg-open README.html
 ```
 
 `$md-preview-on-save` は未移植のため、保存ごとの自動変換は行われません。
@@ -583,8 +586,8 @@ Value: pandoc -s README.md -o README.html && xdg-open README.html
 | `*Preview*` に `command not found` | grip が入っていない、または PATH に無い | `sudo apt install grip` や `pip install grip` |
 | `Address already in use` と出る | 前の grip がまだ起動している | `*Preview*` で `^C` で止めてから `M-Y` |
 | ブラウザが開かない | `--browser` が付いていない | `grip --browser README.md` にするか、URL を手動で開く |
-| ファイル名が出ない | `%f` は Rust 版では未展開 | コマンドにファイル名を直接書く |
-| `preview of …` しか出ない | `$md-preview-command` が空 | `C-X A` で grip 等のコマンドを設定 |
+| ファイル名が出ない | バッファにファイル名が無い (未保存) | 保存してから `M-Y`。既定の `grip %f` はファイル名バッファで使う |
+| `[preview finished]` のみで URL が出ない | `$md-preview-command` に `%f` の無いコマンドや即終了するコマンドが設定されている | `C-X A` で既定の `grip %f` に戻すか、`grip <ファイル名>` を設定 |
 
 ### 7.11 実践: README を 1 から書く
 
@@ -643,5 +646,5 @@ M-Y                           → grip でプレビュー（出力は *Preview* 
 | `%H` が表示されない | Rust 版では未移植 | `mode-line-format` で `%m` / `%b` 等を使う |
 | 箇条書きが `- → * → +` に巡回しない | Rust 版では未移植 | `md-list-toggle` は付加/除去のみ |
 | 自動ペアが効かない | `$md-auto-pair` が FALSE | `C-X A` で `md-auto-pair` を TRUE に |
-| プレビューが起動しない | `$md-preview-command` の設定 | コマンドが PATH 上にあるか確認 (既定は空) |
+| プレビューが起動しない | `$md-preview-command` の設定 | コマンドが PATH 上にあるか確認 (既定は `grip %f`) |
 | プレビューを止めたい | grip などのコマンドが起動したまま | `*Preview*` バッファに切り替えて `^C` |

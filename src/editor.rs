@@ -22,6 +22,11 @@ pub trait EditorIo {
     fn yesno(&mut self, prompt: &str) -> bool;
     /// 生のキーストロークを 1 つ読む (プレフィックス処理は Editor 側)。
     fn read_key(&mut self) -> Ckey;
+    /// 指定時間だけ待ってキーを読む。無ければ None。
+    /// プレビュー出力を待つ間も描画を更新するために使う。
+    fn read_key_timeout(&mut self, _timeout: std::time::Duration) -> Option<Ckey> {
+        Some(self.read_key())
+    }
     /// 外部プロセス実行中は raw mode を解除する。
     fn suspend_terminal(&mut self) {}
     fn resume_terminal(&mut self) {}

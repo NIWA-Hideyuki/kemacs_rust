@@ -4,8 +4,11 @@
 use std::fs;
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::buffer::{BFCHG, MDASAVE, MDVIEW};
 use crate::editor::{Editor, Status};
@@ -241,6 +244,9 @@ pub fn preview_start(ed: &mut Editor, cmd: &str, bname: &str) -> Status {
     let child = match Command::new("sh")
         .arg("-c")
         .arg(&full)
+        // 専用プロセスグループを作り、停止時に grip 等の孫プロセスまで
+        // kill できるようにする (C 版 spawn_preview() の setsid() 相当)。
+        .process_group(0)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .spawn()
@@ -313,12 +319,57 @@ pub fn preview_poll(ed: &mut Editor) {
     }
 }
 
+/// 起動直後の出力を最大 ~300ms ポールし、M-Y が戻った時点で
+/// `*Preview*` バッファに grip のバナー/URL が表示されるようにする
+/// (C 版 preview_wait_first() 相当)。これがないと、編集ループが
+/// read_key() でブロックしている間は出力が回収されず、何かキーを
+/// 押すまでプレビューが空のままになる。
+pub fn preview_wait_first(ed: &mut Editor) {
+    let start = Instant::now();
+    loop {
+        preview_poll(ed);
+        let stop = {
+            let Some(p) = ed.preview.as_ref() else {
+                break;
+            };
+            if p.finished {
+                true
+            } else {
+                ed.find_buffer(&p.bufname)
+                    .is_some_and(|bi| ed.buffers[bi].lines.len() > 1)
+            }
+        };
+        if stop || start.elapsed() >= Duration::from_millis(300) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
 pub fn preview_close(ed: &mut Editor) {
     let Some(mut state) = ed.preview.take() else {
         return;
     };
     if let Some(mut child) = state.child.take() {
-        let _ = child.kill();
+        let pid = child.id() as i32;
+        // シェルだけ kill すると grip 等が孤立し、ポート 6419 を掴んだまま
+        // 残る。次回 M-Y で "Address already in use" となり即終了するため、
+        // プロセスグループ全体を終了させる (C 版 preview_kill_process() 相当)。
+        unsafe {
+            kill(-pid, 15); // SIGTERM
+        }
+        for _ in 0..50 {
+            if !matches!(child.try_wait(), Ok(None)) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        // シェルが先に終了しても grip が残っていることがある。
+        if unsafe { kill(-pid, 0) } == 0 {
+            unsafe {
+                kill(-pid, 9); // SIGKILL
+            }
+        }
         let _ = child.wait();
     }
     if let Some(bi) = ed.find_buffer(&state.bufname) {
@@ -375,6 +426,52 @@ mod tests {
         e.execute_named("storeproc", false, 1); // プロンプトは ScriptedIo では None
         let out = run_capture("printf world", None).unwrap();
         assert_eq!(out.0, b"world");
+    }
+
+    #[test]
+    fn preview_close_kills_grandchildren() {
+        let pidfile =
+            std::env::temp_dir().join(format!("kemacs_preview_pg_{}.pid", std::process::id()));
+        let _ = std::fs::remove_file(&pidfile);
+        let mut e = ed();
+        assert_eq!(
+            preview_start(
+                &mut e,
+                &format!("sleep 30 & echo $! > '{}'; wait", pidfile.display()),
+                "*Preview*"
+            ),
+            Status::True
+        );
+        let mut grandchild = None;
+        for _ in 0..50 {
+            if let Ok(s) = std::fs::read_to_string(&pidfile) {
+                if let Ok(p) = s.trim().parse::<i32>() {
+                    grandchild = Some(p);
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        let pid = grandchild.expect("grandchild pid was not written");
+        preview_close(&mut e);
+        thread::sleep(Duration::from_millis(100));
+        let alive = unsafe { kill(pid, 0) } == 0;
+        let _ = std::fs::remove_file(&pidfile);
+        assert!(!alive, "grandchild {} survived preview_close", pid);
+    }
+
+    #[test]
+    fn preview_wait_first_collects_output_immediately() {
+        let mut e = ed();
+        assert_eq!(
+            preview_start(&mut e, "printf 'banner line\\n'; sleep 2", "*Preview*"),
+            Status::True
+        );
+        preview_wait_first(&mut e);
+        let bi = e.find_buffer("*Preview*").unwrap();
+        let text = String::from_utf8_lossy(&e.buffers[bi].text()).into_owned();
+        assert!(text.contains("banner line"), "{}", text);
+        preview_close(&mut e);
     }
 
     #[test]
