@@ -307,10 +307,13 @@ pub fn draw_diff(prev: Option<&Frame>, frame: &Frame) -> io::Result<()> {
     let modeline_changed = full || prev.is_none_or(|p| p.modeline != frame.modeline);
     if modeline_changed {
         // C 版と同じくモードラインは常に反転表示 (SGR 7)。
+        // C 版の w_toprow + w_ntrows に相当する行はフレーム末尾の next 行。
+        // フレーム最終行 (rows - 1) は通常のテキスト行なので、そこへ
+        // モードラインを書くとスクロール時にテキストへ上書きされて消える。
         crossterm::queue!(out, SetAttribute(Attribute::Reverse))?;
         crossterm::queue!(
             out,
-            MoveTo(0, (rows - 1) as u16),
+            MoveTo(0, rows as u16),
             Print(frame.modeline.clone()),
             Clear(ClearType::UntilNewLine)
         )?;
@@ -323,7 +326,7 @@ pub fn draw_diff(prev: Option<&Frame>, frame: &Frame) -> io::Result<()> {
     if full || prev.is_none_or(|p| p.message != frame.message) {
         crossterm::queue!(
             out,
-            MoveTo(0, rows as u16),
+            MoveTo(0, (rows + 1) as u16),
             Print(frame.message.clone()),
             Clear(ClearType::UntilNewLine)
         )?;
