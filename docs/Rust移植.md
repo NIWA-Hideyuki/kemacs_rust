@@ -55,6 +55,8 @@ C 版互換の起動オプションも使えます (例: `cargo run -- -v -g 50 
   `C-X @` (pipecmd)、`C-X #` (filter)、`M-S` (bktoshell)、`&escape` 関数。
 - **非同期プレビュー**: `M-Y` (md-preview) で外部コマンドをバックグラウンド実行し、
   pipe の nonblock read で出力を専用バッファへ追記。プレビュー中に `C-C` で中止。
+- **マウスキャプチャ**: マウス操作機能は提供しないが、端末のスクロールバックを
+  防ぐため SGR 1006 キャプチャは有効なまま。ホイールイベントは破棄する。
 - **カラー**: `$fcolor` / `$bcolor` と `set-fcolor` / `set-bcolor` (M-x) /
   `toggle-color`。8/256 色 (Ansi) と truecolor (RGB) に対応。
 - **C Mode / Python Mode / Markdown Mode** (`src/modes.rs`):

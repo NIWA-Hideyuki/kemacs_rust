@@ -6,7 +6,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers,
+};
 use crossterm::style::{
     Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
 };
@@ -88,6 +91,10 @@ impl TerminalIo {
                 }
                 Ok(Event::Key(KeyEvent { code, .. })) if code == KeyCode::Null => {}
                 Ok(Event::Paste(_)) => {}
+                // マウス操作は提供しないが、キャプチャ自体は有効に保つ。
+                // 解除すると端末がホイールをスクロールバックと解釈し、
+                // エディタ描画外の領域が見えてしまうため、イベントは破棄する。
+                Ok(Event::Mouse(_)) => {}
                 Ok(Event::Resize(_, _)) => {
                     RESIZE_PENDING.store(true, Ordering::Relaxed);
                 }
@@ -310,10 +317,15 @@ pub fn draw(frame: &Frame) -> io::Result<()> {
 }
 
 pub fn enable() -> io::Result<()> {
-    terminal::enable_raw_mode()
+    terminal::enable_raw_mode()?;
+    // マウス操作機能は提供しないが、キャプチャは有効にしておく。
+    // これを外すと端末がホイールをスクロールバックとして扱い、
+    // エディタ描画外のバッファが見えてしまう。
+    crossterm::execute!(io::stdout(), EnableMouseCapture)
 }
 
 pub fn disable() -> io::Result<()> {
+    let _ = crossterm::execute!(io::stdout(), DisableMouseCapture);
     terminal::disable_raw_mode()
 }
 

@@ -81,7 +81,7 @@ cargo clippy --all-targets -- -D warnings
   置換、undo / redo。
 - C Mode / Python Mode / Markdown Mode の自動インデント、Markdown conceal、
   外部プレビュー、行番号ガーター、カラー表示。
-- 差分描画、リサイズ時の全描画。
+- 差分描画、リサイズ時の全描画、端末スクロールバック抑止 (マウス操作自体は未提供)。
 - シェル実行、autosave、パスワード非エコー入力、C 互換の弱暗号と
   XChaCha20-Poly1305 + PBKDF2 の強暗号。
 
