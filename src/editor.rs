@@ -371,6 +371,12 @@ impl Editor {
         self.mpresf = true;
     }
 
+    /// メッセージ行を消す (C 版 mlerase() 相当)。
+    pub fn clear_message(&mut self) {
+        self.message.clear();
+        self.mpresf = false;
+    }
+
     /// 外部コマンド実行の前後で端末モードを切り替える。
     pub fn suspend_terminal(&mut self) {
         self.io.suspend_terminal();
@@ -672,5 +678,16 @@ mod editor_tests {
             Some(crate::keycode::ctlxlctl(b'S'))
         );
         assert_eq!(parse_key_name("M-f"), Some(crate::keycode::meta(b'f')));
+    }
+
+    #[test]
+    fn mlwrite_then_clear_message() {
+        let mut e = Editor::new(Box::new(crate::input::ScriptedIo::new()), 24, 80);
+        e.mlwrite("a message");
+        assert_eq!(e.message, "a message");
+        assert!(e.mpresf);
+        e.clear_message();
+        assert!(e.message.is_empty());
+        assert!(!e.mpresf);
     }
 }

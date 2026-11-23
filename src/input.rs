@@ -307,14 +307,14 @@ pub fn draw_diff(prev: Option<&Frame>, frame: &Frame) -> io::Result<()> {
             crossterm::queue!(out, SetForegroundColor(fg), SetBackgroundColor(bg))?;
         }
     }
-    if full || prev.is_none_or(|p| p.message != frame.message) {
-        crossterm::queue!(
-            out,
-            MoveTo(0, (rows + 1) as u16),
-            Print(frame.message.clone()),
-            Clear(ClearType::UntilNewLine)
-        )?;
-    }
+    // メッセージ行は毎回描く。プロンプト (C-X A 等) は Editor::message を
+    // 通さず端末へ直接書くため、内容変更だけを見ると消えずに残る。
+    crossterm::queue!(
+        out,
+        MoveTo(0, (rows + 1) as u16),
+        Print(frame.message.clone()),
+        Clear(ClearType::UntilNewLine)
+    )?;
     if frame.color_on && !modeline_changed {
         crossterm::queue!(out, ResetColor)?;
     }
@@ -403,12 +403,18 @@ pub fn run(ed: &mut Editor) -> io::Result<()> {
         if k == RESIZE_KEY {
             continue;
         }
+        // 前のコマンドが出したメッセージを、次のキーが来た時点で消す
+        // (C 版 recedit() の mlerase() 相当)。消さないと draw_diff が
+        // 内容不変と判断し、メッセージ行が画面に残り続ける。
+        if ed.mpresf {
+            ed.clear_message();
+            let cur = display::frame(ed);
+            draw_diff(prev.as_ref(), &cur)?;
+            prev = Some(cur);
+        }
         if let Some((k2, f, n)) = ed.feed_key(k) {
             ed.record_key(k2, f, n);
             let _ = ed.execute(k2, f, n);
-            if k2 != ctl(b'G') {
-                ed.mpresf = false;
-            }
         }
     }
     Ok(())
