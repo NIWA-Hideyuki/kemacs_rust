@@ -351,7 +351,10 @@ pub fn frame(ed: &mut Editor) -> Frame {
         let conceal = ed.md_conceal && b.mode & MDMDMOD != 0;
         let (text, _) = render_line_concealed(b.line_or_sentinel(li), ed.tabsize, conceal);
         line.push_str(&text);
-        rows.push(line.chars().take(cols).collect());
+        // 文字数ではなく表示桁数で切り詰める。全角文字が混じると
+        // chars().take(cols) では桁 overflow し、端末が次行 (モードライン) へ
+        // 折り返して上書きしてしまう。
+        rows.push(truncate_width(&line, cols));
     }
     let dotline = b.dot.line;
     let conceal = ed.md_conceal && b.mode & MDMDMOD != 0;
@@ -360,11 +363,7 @@ pub fn frame(ed: &mut Editor) -> Frame {
     let cursor_col = (gutter + *map.get(b.dot.off).unwrap_or(map.last().unwrap_or(&0)))
         .min(cols.saturating_sub(1));
     let modeline = expand_modeline(ed);
-    let message = if ed.message.len() > cols {
-        ed.message.chars().take(cols).collect()
-    } else {
-        ed.message.clone()
-    };
+    let message = truncate_width(&ed.message, cols);
     Frame {
         rows,
         modeline,
@@ -476,5 +475,25 @@ mod modeline_tests {
             "=".repeat(25)
         );
         assert_eq!(f.modeline, expected);
+    }
+
+    #[test]
+    fn frame_rows_never_exceed_screen_width_with_wide_chars() {
+        let mut ed = Editor::new(Box::new(ScriptedIo::new()), 24, 20);
+        ed.show_line_numbers = true;
+        ed.line_number_width = 6;
+        ed.buffer_mut().insert_bytes(
+            "日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語".as_bytes(),
+        );
+        let f = frame(&mut ed);
+        for row in &f.rows {
+            assert!(
+                display_width(row) <= ed.screen_cols,
+                "row wider than screen: {:?} ({})",
+                row,
+                display_width(row)
+            );
+        }
+        assert!(display_width(&f.message) <= ed.screen_cols);
     }
 }
