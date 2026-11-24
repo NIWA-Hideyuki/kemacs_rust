@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers,
+    KeyModifiers, MouseEventKind,
 };
 use crossterm::style::{
     Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
@@ -91,10 +91,13 @@ impl TerminalIo {
                 }
                 Ok(Event::Key(KeyEvent { code, .. })) if code == KeyCode::Null => {}
                 Ok(Event::Paste(_)) => {}
-                // マウス操作は提供しないが、キャプチャ自体は有効に保つ。
-                // 解除すると端末がホイールをスクロールバックと解釈し、
-                // エディタ描画外の領域が見えてしまうため、イベントは破棄する。
-                Ok(Event::Mouse(_)) => {}
+                // ホイールはカーソル移動の疑似キーとして扱う。
+                // クリック / ドラッグは提供しないため捨てる。
+                Ok(Event::Mouse(m)) => {
+                    if let Some(w) = map_mouse(m.kind) {
+                        return w;
+                    }
+                }
                 Ok(Event::Resize(_, _)) => {
                     RESIZE_PENDING.store(true, Ordering::Relaxed);
                 }
@@ -128,6 +131,10 @@ impl TerminalIo {
             );
             let _ = out.flush();
             let k = self.next_key();
+            // ホイールはプロンプトへの文字入力に使わない。
+            if crate::keycode::is_wheel(k) {
+                continue;
+            }
             if k == ctl(b'G') {
                 return None;
             }
@@ -196,6 +203,17 @@ pub fn map_key(code: KeyCode, modifiers: KeyModifiers) -> Ckey {
     }
 }
 
+/// crossterm のマウスイベント種別を疑似キーへ変換する。
+/// ホイール (上下) のみカーソル移動として使う。横スクロール・クリック・
+/// ドラッグはエディタの機能に含めないため None を返す。
+pub fn map_mouse(kind: MouseEventKind) -> Option<Ckey> {
+    match kind {
+        MouseEventKind::ScrollUp => Some(crate::keycode::WHEELUP),
+        MouseEventKind::ScrollDown => Some(crate::keycode::WHEELDOWN),
+        _ => None,
+    }
+}
+
 impl EditorIo for TerminalIo {
     fn prompt(&mut self, prompt: &str, default: Option<&str>) -> Option<String> {
         self.prompt_inner(prompt, default, false)
@@ -221,6 +239,10 @@ impl EditorIo for TerminalIo {
             );
             let _ = out.flush();
             let k = self.next_key();
+            // ホイールはプロンプトへの文字入力に使わない。
+            if crate::keycode::is_wheel(k) {
+                continue;
+            }
             if k == ctl(b'G') {
                 return None;
             }
@@ -255,6 +277,10 @@ impl EditorIo for TerminalIo {
         );
         let _ = out.flush();
         let k = self.next_key();
+        // ホイールで yes/no を確定しない。
+        if crate::keycode::is_wheel(k) {
+            return self.yesno(prompt);
+        }
         matches!(code(k), b'y' | b'Y')
     }
 
@@ -361,8 +387,8 @@ pub fn draw(frame: &Frame) -> io::Result<()> {
 
 pub fn enable() -> io::Result<()> {
     terminal::enable_raw_mode()?;
-    // マウス操作機能は提供しないが、キャプチャは有効にしておく。
-    // これを外すと端末がホイールをスクロールバックとして扱い、
+    // マウスキャプチャはホイールイベントを受け取るために有効にする。
+    // 外すと端末がホイールをスクロールバックとして扱い、
     // エディタ描画外のバッファが見えてしまう。
     crossterm::execute!(io::stdout(), EnableMouseCapture)
 }
@@ -436,6 +462,12 @@ pub fn run(ed: &mut Editor) -> io::Result<()> {
             draw_diff(prev.as_ref(), &cur)?;
             prev = Some(cur);
         }
+        // ホイールはカーソル移動専用。プレフィックス処理やマクロ記録を
+        // 挟まず、直接コマンドとして実行する。
+        if let Some((name, n)) = ed.wheel_command(k) {
+            let _ = ed.execute_named(name, false, n);
+            continue;
+        }
         if let Some((k2, f, n)) = ed.feed_key(k) {
             ed.record_key(k2, f, n);
             let _ = ed.execute(k2, f, n);
@@ -480,6 +512,7 @@ impl EditorIo for ScriptedIo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keycode::{WHEELDOWN, WHEELUP};
 
     #[test]
     fn map_ctrl_and_meta() {
@@ -493,6 +526,20 @@ mod tests {
         assert_eq!(
             map_key(KeyCode::Up, KeyModifiers::NONE),
             spec(meta(b'A') as u8)
+        );
+    }
+
+    #[test]
+    fn wheel_events_map_to_pseudo_keys_only() {
+        assert_eq!(map_mouse(MouseEventKind::ScrollUp), Some(WHEELUP));
+        assert_eq!(map_mouse(MouseEventKind::ScrollDown), Some(WHEELDOWN));
+        // クリック・ドラッグ・横スクロールはエディタ機能に含めない。
+        assert_eq!(map_mouse(MouseEventKind::Moved), None);
+        assert_eq!(map_mouse(MouseEventKind::ScrollLeft), None);
+        assert_eq!(map_mouse(MouseEventKind::ScrollRight), None);
+        assert_eq!(
+            map_mouse(MouseEventKind::Down(crossterm::event::MouseButton::Left)),
+            None
         );
     }
 }

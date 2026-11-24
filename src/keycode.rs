@@ -7,7 +7,18 @@ pub const CTLFLG: Ckey = 0x0100_0000;
 pub const META: Ckey = 0x0200_0000;
 pub const CTLX: Ckey = 0x0400_0000;
 pub const SPEC: Ckey = 0x0800_0000;
-pub const CK_FLAGS: Ckey = CTLFLG | META | CTLX | SPEC;
+/// マウス (ホイール) の疑似キー用フラグ。C 版に無い Rust 版の拡張。
+pub const MOUSEFLG: Ckey = 0x1000_0000;
+pub const CK_FLAGS: Ckey = CTLFLG | META | CTLX | SPEC | MOUSEFLG;
+
+/// マウスホイールの疑似キー。1 ノッチ = 1 キー。
+pub const WHEELUP: Ckey = MOUSEFLG | b'U' as Ckey;
+pub const WHEELDOWN: Ckey = MOUSEFLG | b'D' as Ckey;
+
+/// キーがマウスホイールの疑似キーか。
+pub fn is_wheel(k: Ckey) -> bool {
+    k & MOUSEFLG != 0
+}
 
 pub const BELL: u8 = 0x07;
 pub const TAB: u8 = 0x09;
@@ -83,6 +94,13 @@ pub fn bare(k: Ckey) -> Ckey {
 
 /// C 版 `cmdstr()` と同じ形式 ("C-A", "M-f", "^X C-S", "SPEC M-A" 等) に変換する。
 pub fn cmdstr(k: Ckey) -> String {
+    if k & MOUSEFLG != 0 {
+        return if k == WHEELUP {
+            "Wheel-Up".to_string()
+        } else {
+            "Wheel-Down".to_string()
+        };
+    }
     let mut s = String::new();
     if k & META != 0 {
         s.push_str("M-");
@@ -154,5 +172,17 @@ mod tests {
         assert_eq!(cmdstr(ctlxctl(b'S')), "^X C-S");
         assert_eq!(cmdstr(meta(b'f')), "M-f");
         assert_eq!(cmdstr(DEL as Ckey), "<127>");
+    }
+
+    #[test]
+    fn wheel_keys_are_flagged_and_not_self_insertable() {
+        assert!(is_wheel(WHEELUP));
+        assert!(is_wheel(WHEELDOWN));
+        assert!(!is_wheel(ctl(b'U')));
+        // MOUSEFLG は CK_FLAGS に含まれるため、execute() の自己挿入対象から外れる。
+        assert_ne!(WHEELUP & CK_FLAGS, 0);
+        assert_eq!(code(WHEELUP), b'U');
+        assert_eq!(cmdstr(WHEELUP), "Wheel-Up");
+        assert_eq!(cmdstr(WHEELDOWN), "Wheel-Down");
     }
 }

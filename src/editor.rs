@@ -143,6 +143,8 @@ pub struct Editor {
     pub global_mode: u32,
     /// TAB の幅。0 はタブ文字を挿入する C 版の動作。
     pub tabsize: usize,
+    /// マウスホイール 1 ノッチで移動する行数 ($wheel-lines)。
+    pub wheel_lines: usize,
     /// 記録中のキーボードマクロ (キー, 引数フラグ, 回数)。
     pub kbdm: Vec<(Ckey, bool, i32)>,
     pub kbdmode: KbdMode,
@@ -244,6 +246,7 @@ impl Editor {
             last_saved_win_buf: Some((0, 0)),
             global_mode: 0,
             tabsize: 8,
+            wheel_lines: 3,
             kbdm: Vec::new(),
             kbdmode: KbdMode::Stop,
             kbdrep: 0,
@@ -409,6 +412,21 @@ impl Editor {
     /// I/O 実装から生キーを 1 つ読む。
     pub fn read_key(&mut self) -> Ckey {
         self.io.read_key()
+    }
+
+    /// マウスホイールの疑似キーを (コマンド名, 移動行数) に変換する。
+    /// ホイールでなければ None。`run` ループからプレフィックス処理や
+    /// マクロ記録を挟まず直接 `execute_named` する。
+    pub fn wheel_command(&self, k: Ckey) -> Option<(&'static str, i32)> {
+        if !crate::keycode::is_wheel(k) {
+            return None;
+        }
+        let lines = self.wheel_lines.clamp(1, 50) as i32;
+        if k == crate::keycode::WHEELUP {
+            Some(("wheel-up", -lines))
+        } else {
+            Some(("wheel-down", lines))
+        }
     }
 
     /// コマンドからの入力要求。スクリプト実行中は引数トークンを返す。

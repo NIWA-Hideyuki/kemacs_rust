@@ -182,6 +182,8 @@ const EXTRA: &[&str] = &[
     "delgmode",
     "updmode",
     "millisleep",
+    "wheel-up",
+    "wheel-down",
     "write-message",
     "insert-string",
     "istring",
@@ -305,6 +307,7 @@ pub fn dispatch(ed: &mut Editor, name: &str, f: bool, n: i32) -> Status {
         "backline" => vertical(ed, -n),
         "forwpage" => vertical(ed, n.saturating_mul((ed.window().rows as i32).max(1))),
         "backpage" => vertical(ed, n.saturating_mul(-(ed.window().rows as i32).max(1))),
+        "wheel-up" | "wheel-down" => wheel_move(ed, name == "wheel-up", n),
         "gotobob" => {
             ed.buffer_mut().goto_bob();
             St::True
@@ -340,7 +343,13 @@ pub fn dispatch(ed: &mut Editor, name: &str, f: bool, n: i32) -> Status {
         "killtext" => kill_to_eol(ed, n),
         "twiddle" => transpose(ed),
         "quote" => {
-            let k = ed.io.read_key();
+            // ホイールは quoted-insert の文字にしない。
+            let k = loop {
+                let k = ed.io.read_key();
+                if !crate::keycode::is_wheel(k) {
+                    break k;
+                }
+            };
             let c = code(k);
             if c == 0 {
                 St::False
@@ -593,6 +602,13 @@ fn vertical(ed: &mut Editor, n: i32) -> Status {
     }
     b.dot.off = off.min(l.len());
     St::True
+}
+
+/// マウスホイールによるカーソル移動。n は移動行数 (負=上)。
+/// vertical() を通すので、連続ノッチでは目的列が保持される。
+fn wheel_move(ed: &mut Editor, up: bool, n: i32) -> Status {
+    let lines = n.unsigned_abs().max(1);
+    vertical(ed, if up { -(lines as i32) } else { lines as i32 })
 }
 
 fn paragraph(ed: &mut Editor, forward: bool, n: i32) -> Status {
@@ -903,6 +919,9 @@ fn deblank(ed: &mut Editor) -> Status {
 pub fn read_key_command(ed: &mut Editor) -> Option<(Ckey, bool, i32)> {
     loop {
         let k = ed.read_key();
+        if crate::keycode::is_wheel(k) {
+            continue;
+        }
         if k == crate::keycode::ctl(b'G') {
             return None;
         }
@@ -991,5 +1010,48 @@ mod tests {
         assert_eq!(k, ctl(b'F'));
         assert!(f);
         assert_eq!(n, 12);
+    }
+
+    #[test]
+    fn wheel_command_maps_pseudo_keys_to_line_steps() {
+        let mut e = ed();
+        assert_eq!(
+            e.wheel_command(crate::keycode::WHEELUP),
+            Some(("wheel-up", -3))
+        );
+        assert_eq!(
+            e.wheel_command(crate::keycode::WHEELDOWN),
+            Some(("wheel-down", 3))
+        );
+        assert_eq!(e.wheel_command(ctl(b'U')), None);
+        e.wheel_lines = 5;
+        assert_eq!(
+            e.wheel_command(crate::keycode::WHEELUP),
+            Some(("wheel-up", -5))
+        );
+    }
+
+    #[test]
+    fn wheel_moves_cursor_and_keeps_goal_column() {
+        let mut e = ed();
+        let mut text = Vec::new();
+        for i in 0..20 {
+            text.extend_from_slice(format!("line {:02} xxxxx\n", i + 1).as_bytes());
+        }
+        e.buffer_mut().insert_bytes(&text);
+        e.buffer_mut().goto_bob();
+        // 4 文字目へ進んでからホイールを回す。目的列は保持される。
+        for _ in 0..4 {
+            e.buffer_mut().forward_char();
+        }
+        let wl = e.wheel_lines as i32;
+        assert_eq!(e.execute_named("wheel-down", false, wl), St::True);
+        assert_eq!(e.buffer().dot.line, 3);
+        assert_eq!(e.buffer().dot.off, 4);
+        assert_eq!(e.execute_named("wheel-up", false, wl), St::True);
+        assert_eq!(e.buffer().dot, crate::buffer::Pos::new(0, 4));
+        // バッファ先頭では上に動けない。
+        assert_eq!(e.execute_named("wheel-up", false, wl), St::False);
+        assert_eq!(e.buffer().dot, crate::buffer::Pos::new(0, 4));
     }
 }

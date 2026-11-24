@@ -90,6 +90,7 @@ pub fn get_bvar(ed: &Editor, name: &str) -> Option<String> {
     let v = match name.to_ascii_lowercase().as_str() {
         "fill-column" => ed.fillcol.to_string(),
         "tab-size" | "tabsize" => ed.tabsize.to_string(),
+        "wheel-lines" => ed.wheel_lines.to_string(),
         "undo-limit" => b.undo_limit.to_string(),
         "linenumbers" => ltos(ed.show_line_numbers),
         "linenumwidth" => ed.line_number_width.to_string(),
@@ -150,6 +151,7 @@ pub fn set_bvar(ed: &mut Editor, name: &str, val: &str) -> bool {
         match n.as_str() {
             "fill-column" => ed.fillcol = v,
             "tab-size" | "tabsize" => ed.tabsize = v,
+            "wheel-lines" => ed.wheel_lines = v.clamp(1, 50),
             "undo-limit" => ed.buffer_mut().undo_limit = v,
             "linenumwidth" => ed.line_number_width = v.clamp(1, 8),
             "pagelen" => {
@@ -351,7 +353,13 @@ fn eval_func(ed: &mut Editor, name: &str, a: &[String]) -> String {
             (c as char).to_string()
         }
         "getkey" | "get-key" => {
-            let k = ed.read_key();
+            // ホイールは文字として返さない。
+            let k = loop {
+                let k = ed.read_key();
+                if !crate::keycode::is_wheel(k) {
+                    break k;
+                }
+            };
             let c = crate::keycode::code(k);
             (c as char).to_string()
         }
@@ -721,6 +729,28 @@ mod tests {
         io.keys.push_back(b'x' as crate::keycode::Ckey);
         let mut ed = Editor::new(Box::new(io), 24, 80);
         assert_eq!(eval_token(&mut ed, "&getkey"), "x");
+    }
+
+    #[test]
+    fn getkey_skips_wheel_events() {
+        let mut io = ScriptedIo::new();
+        io.keys.push_back(crate::keycode::WHEELUP);
+        io.keys.push_back(crate::keycode::WHEELDOWN);
+        io.keys.push_back(b'q' as crate::keycode::Ckey);
+        let mut ed = Editor::new(Box::new(io), 24, 80);
+        assert_eq!(eval_token(&mut ed, "&getkey"), "q");
+    }
+
+    #[test]
+    fn wheel_lines_variable_roundtrips() {
+        let mut ed = Editor::new(Box::new(ScriptedIo::new()), 24, 80);
+        assert_eq!(get_bvar(&ed, "wheel-lines").as_deref(), Some("3"));
+        assert!(set_bvar(&mut ed, "wheel-lines", "5"));
+        assert_eq!(ed.wheel_lines, 5);
+        assert_eq!(get_bvar(&ed, "wheel-lines").as_deref(), Some("5"));
+        // 範囲外は 1..=50 に丸める。
+        set_bvar(&mut ed, "wheel-lines", "999");
+        assert_eq!(ed.wheel_lines, 50);
     }
 
     #[test]
