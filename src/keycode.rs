@@ -7,17 +7,22 @@ pub const CTLFLG: Ckey = 0x0100_0000;
 pub const META: Ckey = 0x0200_0000;
 pub const CTLX: Ckey = 0x0400_0000;
 pub const SPEC: Ckey = 0x0800_0000;
-/// マウス (ホイール) の疑似キー用フラグ。C 版に無い Rust 版の拡張。
+/// マウスの疑似キー用フラグ。C 版に無い Rust 版の拡張。
 pub const MOUSEFLG: Ckey = 0x1000_0000;
 pub const CK_FLAGS: Ckey = CTLFLG | META | CTLX | SPEC | MOUSEFLG;
 
-/// マウスホイールの疑似キー。1 ノッチ = 1 キー。
-pub const WHEELUP: Ckey = MOUSEFLG | b'U' as Ckey;
-pub const WHEELDOWN: Ckey = MOUSEFLG | b'D' as Ckey;
+/// マウスホイールの疑似キー (1 ノッチ = 1 キー)。座標は持たない。
+/// エンコード形式は `src/mouse.rs` を参照。
+pub const WHEELUP: Ckey = crate::mouse::encode(crate::mouse::MouseKind::WheelUp, 0, 0);
+pub const WHEELDOWN: Ckey = crate::mouse::encode(crate::mouse::MouseKind::WheelDown, 0, 0);
 
+/// キーがマウス (ホイール/ボタン) の疑似キーか。
+pub fn is_mouse(k: Ckey) -> bool {
+    k & MOUSEFLG != 0
+}
 /// キーがマウスホイールの疑似キーか。
 pub fn is_wheel(k: Ckey) -> bool {
-    k & MOUSEFLG != 0
+    crate::mouse::is_wheel(k)
 }
 
 pub const BELL: u8 = 0x07;
@@ -94,11 +99,25 @@ pub fn bare(k: Ckey) -> Ckey {
 
 /// C 版 `cmdstr()` と同じ形式 ("C-A", "M-f", "^X C-S", "SPEC M-A" 等) に変換する。
 pub fn cmdstr(k: Ckey) -> String {
-    if k & MOUSEFLG != 0 {
-        return if k == WHEELUP {
-            "Wheel-Up".to_string()
-        } else {
-            "Wheel-Down".to_string()
+    if is_mouse(k) {
+        return match crate::mouse::decode(k) {
+            Some(ev) => match ev.kind {
+                crate::mouse::MouseKind::WheelUp => "Wheel-Up".to_string(),
+                crate::mouse::MouseKind::WheelDown => "Wheel-Down".to_string(),
+                crate::mouse::MouseKind::Press => format!("Mouse-Down({},{})", ev.col, ev.row),
+                crate::mouse::MouseKind::Drag => format!("Mouse-Drag({},{})", ev.col, ev.row),
+                crate::mouse::MouseKind::Release => format!("Mouse-Up({},{})", ev.col, ev.row),
+                crate::mouse::MouseKind::RightPress => {
+                    format!("Mouse-RDown({},{})", ev.col, ev.row)
+                }
+                crate::mouse::MouseKind::RightDrag => {
+                    format!("Mouse-RDrag({},{})", ev.col, ev.row)
+                }
+                crate::mouse::MouseKind::RightRelease => {
+                    format!("Mouse-RUp({},{})", ev.col, ev.row)
+                }
+            },
+            None => "Mouse?".to_string(),
         };
     }
     let mut s = String::new();
@@ -181,7 +200,14 @@ mod tests {
         assert!(!is_wheel(ctl(b'U')));
         // MOUSEFLG は CK_FLAGS に含まれるため、execute() の自己挿入対象から外れる。
         assert_ne!(WHEELUP & CK_FLAGS, 0);
-        assert_eq!(code(WHEELUP), b'U');
+        assert_eq!(
+            crate::mouse::decode(WHEELUP).unwrap().kind,
+            crate::mouse::MouseKind::WheelUp
+        );
+        assert_eq!(
+            crate::mouse::decode(WHEELDOWN).unwrap().kind,
+            crate::mouse::MouseKind::WheelDown
+        );
         assert_eq!(cmdstr(WHEELUP), "Wheel-Up");
         assert_eq!(cmdstr(WHEELDOWN), "Wheel-Down");
     }

@@ -7,6 +7,7 @@
 
 pub mod buffer;
 pub mod casefold;
+pub mod clipboard;
 pub mod commands;
 pub mod crypt;
 pub mod display;
@@ -15,6 +16,7 @@ pub mod encoding;
 pub mod input;
 pub mod keycode;
 pub mod modes;
+pub mod mouse;
 pub mod regex;
 pub mod script;
 pub mod search;

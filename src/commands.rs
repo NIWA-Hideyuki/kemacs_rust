@@ -346,7 +346,7 @@ pub fn dispatch(ed: &mut Editor, name: &str, f: bool, n: i32) -> Status {
             // ホイールは quoted-insert の文字にしない。
             let k = loop {
                 let k = ed.io.read_key();
-                if !crate::keycode::is_wheel(k) {
+                if !crate::keycode::is_mouse(k) {
                     break k;
                 }
             };
@@ -585,22 +585,20 @@ fn vertical(ed: &mut Editor, n: i32) -> Status {
     }
     b.dot.line = target as usize;
     let l = b.lines[b.dot.line].clone();
+    let len = l.len();
+    // バイト単位で走査するとマルチバイト文字の途中にドットが入ってしまう。
+    // 文字境界だけを使い、表示桁 (タブ・全角を含む) で目的列を狙う。
     let mut off = 0usize;
-    let mut col = 0usize;
-    for (i, &c) in l.iter().enumerate() {
-        if col >= goal {
+    while off < len {
+        let clen = b.char_len_at(b.dot.line, off).max(1);
+        let next = (off + clen).min(len);
+        let col = crate::display::column_of(&l[..next], tabsize);
+        if col > goal {
             break;
         }
-        match c {
-            b'\t' => col = col.saturating_add(tabsize.saturating_sub(col % tabsize.max(1))),
-            _ => col += 1,
-        }
-        off = i + 1;
+        off = next;
     }
-    if col < goal {
-        off = l.len();
-    }
-    b.dot.off = off.min(l.len());
+    b.dot.off = off.min(len);
     St::True
 }
 
@@ -919,7 +917,11 @@ fn deblank(ed: &mut Editor) -> Status {
 pub fn read_key_command(ed: &mut Editor) -> Option<(Ckey, bool, i32)> {
     loop {
         let k = ed.read_key();
-        if crate::keycode::is_wheel(k) {
+        if crate::keycode::is_mouse(k) {
+            continue;
+        }
+        // ペースト/リサイズの擬似キーはキー割り当ての確認対象にしない。
+        if k == crate::input::PASTE_KEY || k == crate::input::RESIZE_KEY {
             continue;
         }
         if k == crate::keycode::ctl(b'G') {
@@ -1013,22 +1015,43 @@ mod tests {
     }
 
     #[test]
+    fn vertical_keeps_char_boundary_on_japanese_lines() {
+        let mut e = ed();
+        e.buffer_mut()
+            .insert_bytes("あいうえお\nかきくけこ\n".as_bytes());
+        e.buffer_mut().goto_bob();
+        for _ in 0..3 {
+            e.buffer_mut().forward_char();
+        }
+        // 目的列は 6 (「え」の手前)。縦移動でも文字境界を維持する。
+        assert_eq!(e.execute_named("forwline", false, 1), St::True);
+        assert_eq!(e.buffer().dot.line, 1);
+        assert_eq!(e.buffer().dot.off, 9);
+    }
+
+    #[test]
     fn wheel_command_maps_pseudo_keys_to_line_steps() {
         let mut e = ed();
         assert_eq!(
-            e.wheel_command(crate::keycode::WHEELUP),
-            Some(("wheel-up", -3))
+            crate::mouse::decode(crate::keycode::WHEELUP).map(|ev| ev.kind),
+            Some(crate::mouse::MouseKind::WheelUp)
         );
-        assert_eq!(
-            e.wheel_command(crate::keycode::WHEELDOWN),
-            Some(("wheel-down", 3))
-        );
-        assert_eq!(e.wheel_command(ctl(b'U')), None);
         e.wheel_lines = 5;
-        assert_eq!(
-            e.wheel_command(crate::keycode::WHEELUP),
-            Some(("wheel-up", -5))
-        );
+        for i in 0..20 {
+            e.buffer_mut()
+                .insert_bytes(format!("line {:02}\n", i + 1).as_bytes());
+        }
+        e.buffer_mut().goto_bob();
+        handle_mouse(&mut e, crate::mouse::MouseKind::WheelDown);
+        assert_eq!(e.buffer().dot.line, 5);
+    }
+
+    fn handle_mouse(e: &mut Editor, kind: crate::mouse::MouseKind) {
+        e.mouse_event(crate::mouse::MouseEvent {
+            kind,
+            row: 0,
+            col: 0,
+        });
     }
 
     #[test]

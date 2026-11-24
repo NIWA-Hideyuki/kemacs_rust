@@ -356,7 +356,7 @@ fn eval_func(ed: &mut Editor, name: &str, a: &[String]) -> String {
             // ホイールは文字として返さない。
             let k = loop {
                 let k = ed.read_key();
-                if !crate::keycode::is_wheel(k) {
+                if !crate::keycode::is_mouse(k) {
                     break k;
                 }
             };

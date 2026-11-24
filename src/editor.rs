@@ -34,6 +34,10 @@ pub trait EditorIo {
     /// 外部プロセス実行中は raw mode を解除する。
     fn suspend_terminal(&mut self) {}
     fn resume_terminal(&mut self) {}
+    /// 端末から届いたブラケットペースト (text)。 ScriptedIo では常に None。
+    fn take_paste(&mut self) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -145,6 +149,12 @@ pub struct Editor {
     pub tabsize: usize,
     /// マウスホイール 1 ノッチで移動する行数 ($wheel-lines)。
     pub wheel_lines: usize,
+    /// 左ボタンを押したままドラッグ中か。
+    pub mouse_drag: bool,
+    /// 右ボタンを押したままドラッグ中か。
+    pub mouse_rdrag: bool,
+    /// 右ボタン押下時点の選択内容 (右クリック=コピー用)。
+    pub mouse_rclip: Option<Vec<u8>>,
     /// 記録中のキーボードマクロ (キー, 引数フラグ, 回数)。
     pub kbdm: Vec<(Ckey, bool, i32)>,
     pub kbdmode: KbdMode,
@@ -247,6 +257,9 @@ impl Editor {
             global_mode: 0,
             tabsize: 8,
             wheel_lines: 3,
+            mouse_drag: false,
+            mouse_rdrag: false,
+            mouse_rclip: None,
             kbdm: Vec::new(),
             kbdmode: KbdMode::Stop,
             kbdrep: 0,
@@ -414,19 +427,32 @@ impl Editor {
         self.io.read_key()
     }
 
-    /// マウスホイールの疑似キーを (コマンド名, 移動行数) に変換する。
-    /// ホイールでなければ None。`run` ループからプレフィックス処理や
-    /// マクロ記録を挟まず直接 `execute_named` する。
-    pub fn wheel_command(&self, k: Ckey) -> Option<(&'static str, i32)> {
-        if !crate::keycode::is_wheel(k) {
-            return None;
+    /// マウスイベントを適用する (クリック / ドラッグ選択、ホイール)。
+    /// `input::run()` からプレフィックス処理やマクロ記録を挟まず呼ぶ。
+    pub fn mouse_event(&mut self, ev: crate::mouse::MouseEvent) {
+        self.restore_window_pos();
+        crate::mouse::handle(self, ev);
+        self.save_window_pos();
+    }
+
+    /// 文字列をドット位置へ挿入し、1 つの undo エントリとして記録する。
+    /// クリップボード貼り付け (右クリック / ブラケットペースト) 用。
+    pub fn insert_snippet(&mut self, text: &[u8]) -> bool {
+        if text.is_empty() {
+            return false;
         }
-        let lines = self.wheel_lines.clamp(1, 50) as i32;
-        if k == crate::keycode::WHEELUP {
-            Some(("wheel-up", -lines))
+        let before = self.buffer().snapshot();
+        if self.buffer_mut().insert_bytes(text) {
+            self.buffer_mut().record_undo(before);
+            true
         } else {
-            Some(("wheel-down", lines))
+            false
         }
+    }
+
+    /// 端末から届いたブラケットペーストのキュー (先入れ先出し)。
+    pub fn take_paste(&mut self) -> Option<Vec<u8>> {
+        self.io.take_paste()
     }
 
     /// コマンドからの入力要求。スクリプト実行中は引数トークンを返す。

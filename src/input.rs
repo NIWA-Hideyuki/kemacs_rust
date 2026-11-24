@@ -7,8 +7,8 @@ use std::sync::Mutex;
 
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers, MouseEventKind,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use crossterm::style::{
     Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
@@ -24,9 +24,12 @@ static RESIZE_PENDING: AtomicBool = AtomicBool::new(false);
 
 /// リサイズ通知用の疑似キー (編集ループが無視する)。
 pub const RESIZE_KEY: Ckey = 0x0E00_0000;
+/// ブラケットペースト通知用の疑似キー (中身は `TerminalIo` のキューから取る)。
+pub const PASTE_KEY: Ckey = 0x0F00_0000;
 
 pub struct TerminalIo {
     keys: Mutex<VecDeque<Ckey>>,
+    pastes: Mutex<VecDeque<Vec<u8>>>,
 }
 
 impl Default for TerminalIo {
@@ -39,7 +42,15 @@ impl TerminalIo {
     pub fn new() -> Self {
         TerminalIo {
             keys: Mutex::new(VecDeque::new()),
+            pastes: Mutex::new(VecDeque::new()),
         }
+    }
+
+    fn pop_paste(&self) -> Option<Vec<u8>> {
+        self.pastes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop_front()
     }
 
     #[allow(clippy::redundant_guards)]
@@ -90,11 +101,17 @@ impl TerminalIo {
                     return map_key(code, modifiers);
                 }
                 Ok(Event::Key(KeyEvent { code, .. })) if code == KeyCode::Null => {}
-                Ok(Event::Paste(_)) => {}
-                // ホイールはカーソル移動の疑似キーとして扱う。
-                // クリック / ドラッグは提供しないため捨てる。
+                // ブラケットペースト: 内容をキューに積み、擬似キーで通知する。
+                Ok(Event::Paste(s)) => {
+                    self.pastes
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push_back(s.into_bytes());
+                    return PASTE_KEY;
+                }
+                // ホイールとボタンを擬似キーへ変換する (中ボタン・移動は捨てる)。
                 Ok(Event::Mouse(m)) => {
-                    if let Some(w) = map_mouse(m.kind) {
+                    if let Some(w) = map_mouse(m.kind, m.column, m.row) {
                         return w;
                     }
                 }
@@ -131,8 +148,15 @@ impl TerminalIo {
             );
             let _ = out.flush();
             let k = self.next_key();
-            // ホイールはプロンプトへの文字入力に使わない。
-            if crate::keycode::is_wheel(k) {
+            // マウス (ホイール/ボタン) をプロンプトへの文字入力に使わない。
+            if crate::keycode::is_mouse(k) {
+                continue;
+            }
+            // ブラケットペーストはそのまま文字列として追加する。
+            if k == PASTE_KEY {
+                if let Some(text) = self.pop_paste() {
+                    buf.push_str(&String::from_utf8_lossy(&text));
+                }
                 continue;
             }
             if k == ctl(b'G') {
@@ -203,13 +227,26 @@ pub fn map_key(code: KeyCode, modifiers: KeyModifiers) -> Ckey {
     }
 }
 
-/// crossterm のマウスイベント種別を疑似キーへ変換する。
-/// ホイール (上下) のみカーソル移動として使う。横スクロール・クリック・
-/// ドラッグはエディタの機能に含めないため None を返す。
-pub fn map_mouse(kind: MouseEventKind) -> Option<Ckey> {
+/// crossterm のマウスイベントを疑似キーへ変換する。
+///
+/// 使うのはホイール (上下)、左ボタンの押下 / ドラッグ / 解放、
+/// 右ボタンの押下 / ドラッグ / 解放。中ボタン、単独の移動、横スクロールは
+/// エディタ機能に含めないため None。
+pub fn map_mouse(kind: MouseEventKind, column: u16, row: u16) -> Option<Ckey> {
+    use crate::mouse::{encode, MouseKind};
     match kind {
-        MouseEventKind::ScrollUp => Some(crate::keycode::WHEELUP),
-        MouseEventKind::ScrollDown => Some(crate::keycode::WHEELDOWN),
+        MouseEventKind::ScrollUp => Some(encode(MouseKind::WheelUp, 0, 0)),
+        MouseEventKind::ScrollDown => Some(encode(MouseKind::WheelDown, 0, 0)),
+        MouseEventKind::Down(MouseButton::Left) => Some(encode(MouseKind::Press, row, column)),
+        MouseEventKind::Drag(MouseButton::Left) => Some(encode(MouseKind::Drag, row, column)),
+        MouseEventKind::Up(MouseButton::Left) => Some(encode(MouseKind::Release, row, column)),
+        MouseEventKind::Down(MouseButton::Right) => {
+            Some(encode(MouseKind::RightPress, row, column))
+        }
+        MouseEventKind::Drag(MouseButton::Right) => Some(encode(MouseKind::RightDrag, row, column)),
+        MouseEventKind::Up(MouseButton::Right) => {
+            Some(encode(MouseKind::RightRelease, row, column))
+        }
         _ => None,
     }
 }
@@ -239,8 +276,15 @@ impl EditorIo for TerminalIo {
             );
             let _ = out.flush();
             let k = self.next_key();
-            // ホイールはプロンプトへの文字入力に使わない。
-            if crate::keycode::is_wheel(k) {
+            // マウス (ホイール/ボタン) をプロンプトへの文字入力に使わない。
+            if crate::keycode::is_mouse(k) {
+                continue;
+            }
+            // ブラケットペーストはそのまま文字列として追加する。
+            if k == PASTE_KEY {
+                if let Some(text) = self.pop_paste() {
+                    buf.push_str(&String::from_utf8_lossy(&text));
+                }
                 continue;
             }
             if k == ctl(b'G') {
@@ -277,8 +321,8 @@ impl EditorIo for TerminalIo {
         );
         let _ = out.flush();
         let k = self.next_key();
-        // ホイールで yes/no を確定しない。
-        if crate::keycode::is_wheel(k) {
+        // マウスで yes/no を確定しない。
+        if crate::keycode::is_mouse(k) {
             return self.yesno(prompt);
         }
         matches!(code(k), b'y' | b'Y')
@@ -314,6 +358,10 @@ impl EditorIo for TerminalIo {
     fn resume_terminal(&mut self) {
         let _ = terminal::enable_raw_mode();
     }
+
+    fn take_paste(&mut self) -> Option<Vec<u8>> {
+        self.pop_paste()
+    }
 }
 
 /// 画面を描画してカーソルを目的位置へ移動する。
@@ -330,12 +378,16 @@ pub fn draw_diff(prev: Option<&Frame>, frame: &Frame) -> io::Result<()> {
         }
     }
     for r in display::changed_rows(prev, frame) {
-        crossterm::queue!(
-            out,
-            MoveTo(0, r as u16),
-            Print(frame.rows[r].clone()),
-            Clear(ClearType::UntilNewLine)
+        crossterm::queue!(out, MoveTo(0, r as u16))?;
+        print_row(
+            &mut out,
+            &frame.rows[r],
+            frame.sel.get(r).map_or(&[][..], |v| v.as_slice()),
+            frame.color_on,
+            fg,
+            bg,
         )?;
+        crossterm::queue!(out, Clear(ClearType::UntilNewLine))?;
     }
     let rows = frame.rows.len();
     let modeline_changed = full || prev.is_none_or(|p| p.modeline != frame.modeline);
@@ -385,15 +437,62 @@ pub fn draw(frame: &Frame) -> io::Result<()> {
     draw_diff(None, frame)
 }
 
+/// 1 行を描く。選択中の文字は反転表示する。
+///
+/// 差分描画で行のテキストが変わっていなくても選択が変わった行は描き直される
+/// (`display::changed_rows`)。カラー表示中は反転解除後に色を戻す必要がある。
+fn print_row<W: Write>(
+    out: &mut W,
+    row: &str,
+    sel: &[bool],
+    color_on: bool,
+    fg: Color,
+    bg: Color,
+) -> io::Result<()> {
+    // 前の行の属性が残っていると、選択ハイライト (Reverse) がここの文字に
+    // 引き継がれてしまう。行ごとに必ず標準属性から始める。
+    if color_on {
+        crossterm::queue!(out, SetForegroundColor(fg), SetBackgroundColor(bg))?;
+    } else {
+        crossterm::queue!(out, SetAttribute(Attribute::Reset))?;
+    }
+    let mut on = false;
+    for (i, ch) in row.chars().enumerate() {
+        let want = sel.get(i).copied().unwrap_or(false);
+        if want != on {
+            if want {
+                crossterm::queue!(out, SetAttribute(Attribute::Reverse))?;
+            } else {
+                crossterm::queue!(out, SetAttribute(Attribute::Reset))?;
+                if color_on {
+                    crossterm::queue!(out, SetForegroundColor(fg), SetBackgroundColor(bg))?;
+                }
+            }
+            on = want;
+        }
+        crossterm::queue!(out, Print(ch))?;
+    }
+    if on {
+        crossterm::queue!(out, SetAttribute(Attribute::Reset))?;
+        if color_on {
+            crossterm::queue!(out, SetForegroundColor(fg), SetBackgroundColor(bg))?;
+        }
+    }
+    Ok(())
+}
+
 pub fn enable() -> io::Result<()> {
     terminal::enable_raw_mode()?;
-    // マウスキャプチャはホイールイベントを受け取るために有効にする。
+    // マウスキャプチャはホイール/ボタンイベントを受け取るために有効にする。
     // 外すと端末がホイールをスクロールバックとして扱い、
     // エディタ描画外のバッファが見えてしまう。
-    crossterm::execute!(io::stdout(), EnableMouseCapture)
+    crossterm::execute!(io::stdout(), EnableMouseCapture)?;
+    // ブラケットペースト: 端末から貼られたテキストをまとめて受け取る。
+    crossterm::execute!(io::stdout(), EnableBracketedPaste)
 }
 
 pub fn disable() -> io::Result<()> {
+    let _ = crossterm::execute!(io::stdout(), DisableBracketedPaste);
     let _ = crossterm::execute!(io::stdout(), DisableMouseCapture);
     terminal::disable_raw_mode()
 }
@@ -453,6 +552,16 @@ pub fn run(ed: &mut Editor) -> io::Result<()> {
         if k == RESIZE_KEY {
             continue;
         }
+        // 端末からのブラケットペースト: ドット位置へそのまま挿入する。
+        if k == PASTE_KEY {
+            if let Some(text) = ed.take_paste() {
+                let n = text.len();
+                if ed.insert_snippet(&text) {
+                    ed.mlwrite(format!("[Pasted {} bytes]", n));
+                }
+            }
+            continue;
+        }
         // 前のコマンドが出したメッセージを、次のキーが来た時点で消す
         // (C 版 recedit() の mlerase() 相当)。消さないと draw_diff が
         // 内容不変と判断し、メッセージ行が画面に残り続ける。
@@ -462,10 +571,9 @@ pub fn run(ed: &mut Editor) -> io::Result<()> {
             draw_diff(prev.as_ref(), &cur)?;
             prev = Some(cur);
         }
-        // ホイールはカーソル移動専用。プレフィックス処理やマクロ記録を
-        // 挟まず、直接コマンドとして実行する。
-        if let Some((name, n)) = ed.wheel_command(k) {
-            let _ = ed.execute_named(name, false, n);
+        // マウスはプレフィックス処理やマクロ記録を挟まず直接適用する。
+        if let Some(ev) = crate::mouse::decode(k) {
+            ed.mouse_event(ev);
             continue;
         }
         if let Some((k2, f, n)) = ed.feed_key(k) {
@@ -530,17 +638,30 @@ mod tests {
     }
 
     #[test]
-    fn wheel_events_map_to_pseudo_keys_only() {
-        assert_eq!(map_mouse(MouseEventKind::ScrollUp), Some(WHEELUP));
-        assert_eq!(map_mouse(MouseEventKind::ScrollDown), Some(WHEELDOWN));
-        // クリック・ドラッグ・横スクロールはエディタ機能に含めない。
-        assert_eq!(map_mouse(MouseEventKind::Moved), None);
-        assert_eq!(map_mouse(MouseEventKind::ScrollLeft), None);
-        assert_eq!(map_mouse(MouseEventKind::ScrollRight), None);
+    fn mouse_events_map_to_pseudo_keys() {
+        assert_eq!(map_mouse(MouseEventKind::ScrollUp, 3, 4), Some(WHEELUP));
+        assert_eq!(map_mouse(MouseEventKind::ScrollDown, 3, 4), Some(WHEELDOWN));
+        let press = map_mouse(MouseEventKind::Down(MouseButton::Left), 7, 2).unwrap();
+        let ev = crate::mouse::decode(press).unwrap();
+        assert_eq!(ev.kind, crate::mouse::MouseKind::Press);
+        assert_eq!((ev.row, ev.col), (2, 7));
+        // 中ボタン、単独移動、横スクロールは機能に含めない。
         assert_eq!(
-            map_mouse(MouseEventKind::Down(crossterm::event::MouseButton::Left)),
+            map_mouse(MouseEventKind::Down(MouseButton::Middle), 0, 0),
             None
         );
+        assert_eq!(map_mouse(MouseEventKind::Moved, 1, 1), None);
+        assert_eq!(map_mouse(MouseEventKind::ScrollLeft, 1, 1), None);
+        assert_eq!(map_mouse(MouseEventKind::ScrollRight, 1, 1), None);
+        // 右ボタンはコピー/ペースト用に使う。
+        for kind in [
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::Drag(MouseButton::Right),
+            MouseEventKind::Up(MouseButton::Right),
+        ] {
+            let ev = crate::mouse::decode(map_mouse(kind, 4, 5).unwrap()).unwrap();
+            assert_eq!((ev.row, ev.col), (5, 4));
+        }
     }
 }
 

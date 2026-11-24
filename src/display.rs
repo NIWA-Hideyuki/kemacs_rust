@@ -123,21 +123,30 @@ pub fn render_line_concealed(bytes: &[u8], tabsize: usize, conceal: bool) -> (St
 }
 
 /// 1 行を画面用文字列に変換し、バイトオフセット -> 表示桁の対応表を返す。
+///
+/// 対応表は「バイト位置ごと」に 1 エントリを持つ (長さ = bytes.len() + 1)。
+/// マルチバイト文字の途中のバイトには、その文字の先頭桁を記録する。
+/// インデックスをバイトオフセットとして使う側 (カーソル位置・選択ハイライト・
+/// マウスの位置換算) はこれに依存している。
 pub fn render_line(bytes: &[u8], tabsize: usize) -> (String, Vec<usize>) {
     let mut out = String::new();
     let mut map = Vec::with_capacity(bytes.len() + 1);
     let mut col = 0usize;
     let mut i = 0usize;
     while i < bytes.len() {
-        map.push(col);
         if bytes[i] == b'\t' {
             let ts = tabsize.max(1);
             let pad = ts - col % ts;
+            map.push(col);
             out.push_str(&" ".repeat(pad));
             col += pad;
             i += 1;
         } else {
             let clen = char_len(&bytes[i..]);
+            // 文字の全バイト位置に同じ開始桁を入れる (途中位置への問い合わせ対策)。
+            for _ in 0..clen {
+                map.push(col);
+            }
             if clen == 1 && bytes[i] < 0x20 {
                 out.push('^');
                 out.push((bytes[i] + b'@') as char);
@@ -162,6 +171,8 @@ pub fn render_line(bytes: &[u8], tabsize: usize) -> (String, Vec<usize>) {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Frame {
     pub rows: Vec<String>,
+    /// 各行の文字ごとの選択ハイライト (マウス/リージョン選択)。rows と同じ長さ。
+    pub sel: Vec<Vec<bool>>,
     pub modeline: String,
     pub message: String,
     pub cursor_row: usize,
@@ -333,10 +344,30 @@ pub fn frame(ed: &mut Editor) -> Frame {
     } else {
         0
     };
+    // mark..dot のバイト範囲 (画面上のどの行をハイライトするか使う)。
+    let region: Option<(usize, usize)> = {
+        let b = ed.buffer();
+        match b.mark {
+            None => None,
+            Some(m) => {
+                let (lo, hi) = if m <= b.dot { (m, b.dot) } else { (b.dot, m) };
+                let a = b.pos_to_offset(lo);
+                let z = b.pos_to_offset(hi);
+                if z > a {
+                    Some((a, z))
+                } else {
+                    None
+                }
+            }
+        }
+    };
     let b = ed.buffer();
     let mut rows = Vec::with_capacity(rows_win);
+    let mut sels = Vec::with_capacity(rows_win);
     for r in 0..rows_win {
         let li = top + r;
+        let line_start = b.pos_to_offset(crate::buffer::Pos::new(li, 0));
+        let line_len = b.line_len(li);
         let mut line = String::new();
         if gutter > 0 && li < b.lines.len() && li + 1 < b.lines.len() + 1 {
             line.push_str(&format!(
@@ -349,12 +380,15 @@ pub fn frame(ed: &mut Editor) -> Frame {
             line.push_str(&" ".repeat(gutter));
         }
         let conceal = ed.md_conceal && b.mode & MDMDMOD != 0;
-        let (text, _) = render_line_concealed(b.line_or_sentinel(li), ed.tabsize, conceal);
+        let (text, map) = render_line_concealed(b.line_or_sentinel(li), ed.tabsize, conceal);
         line.push_str(&text);
         // 文字数ではなく表示桁数で切り詰める。全角文字が混じると
         // chars().take(cols) では桁 overflow し、端末が次行 (モードライン) へ
         // 折り返して上書きしてしまう。
-        rows.push(truncate_width(&line, cols));
+        let truncated = truncate_width(&line, cols);
+        let flags = selection_flags(&map, line_start, line_len, region, gutter, &truncated, cols);
+        rows.push(truncated);
+        sels.push(flags);
     }
     let dotline = b.dot.line;
     let conceal = ed.md_conceal && b.mode & MDMDMOD != 0;
@@ -366,6 +400,7 @@ pub fn frame(ed: &mut Editor) -> Frame {
     let message = truncate_width(&ed.message, cols);
     Frame {
         rows,
+        sel: sels,
         modeline,
         message,
         cursor_row,
@@ -376,13 +411,56 @@ pub fn frame(ed: &mut Editor) -> Frame {
     }
 }
 
+/// 1 行ぶんの選択ハイライト (表示されている文字ごとのフラグ) を作る。
+///
+/// `map` は `render_line_concealed` が返す「バイト位置 -> 行頭からの表示桁」。
+/// `region` はバッファ全体のバイト範囲 [a, b)。`line_start` はその行頭の
+/// バイトオフセット、`gutter` は行番号ガーターの幅。
+fn selection_flags(
+    map: &[usize],
+    line_start: usize,
+    line_len: usize,
+    region: Option<(usize, usize)>,
+    gutter: usize,
+    row: &str,
+    cols: usize,
+) -> Vec<bool> {
+    let limit = cols.min(gutter + map.last().copied().unwrap_or(0));
+    let mut on_col = vec![false; limit];
+    if let Some((a, b)) = region {
+        let lo = a.saturating_sub(line_start);
+        let hi = b.saturating_sub(line_start).min(line_len);
+        for i in lo..hi {
+            let start = gutter + map[i];
+            let end = gutter + map.get(i + 1).copied().unwrap_or(start + 1);
+            for c in start..end.max(start + 1) {
+                if let Some(f) = on_col.get_mut(c) {
+                    *f = true;
+                }
+            }
+        }
+    }
+    let mut out = Vec::with_capacity(row.chars().count());
+    let mut col = 0usize;
+    for ch in row.chars() {
+        let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+        out.push((col..col + w).any(|c| on_col.get(c).copied().unwrap_or(false)));
+        col += w;
+    }
+    out
+}
+
 /// 前フレームと比べて書き換える必要のある行番号 (C 版 updpos/update 相当)。
 pub fn changed_rows(prev: Option<&Frame>, cur: &Frame) -> Vec<usize> {
     match prev {
         None => (0..cur.rows.len()).collect(),
-        Some(p) if p.rows.len() != cur.rows.len() => (0..cur.rows.len()).collect(),
+        Some(p) if p.rows.len() != cur.rows.len() || p.sel.len() != cur.sel.len() => {
+            (0..cur.rows.len()).collect()
+        }
+        // 選択ハイライトだけが変わった行も描き直す必要がある
+        // (ドラッグ中にテキストは変わらないため)。
         Some(p) => (0..cur.rows.len())
-            .filter(|&i| p.rows.get(i) != cur.rows.get(i))
+            .filter(|&i| p.rows.get(i) != cur.rows.get(i) || p.sel.get(i) != cur.sel.get(i))
             .collect(),
     }
 }
@@ -407,6 +485,7 @@ mod diff_tests {
     fn frame(rows: &[&str]) -> Frame {
         Frame {
             rows: rows.iter().map(|s| s.to_string()).collect(),
+            sel: vec![Vec::new(); rows.len()],
             modeline: "line 1".to_string(),
             message: String::new(),
             cursor_row: 0,
@@ -478,6 +557,42 @@ mod modeline_tests {
     }
 
     #[test]
+    fn render_line_map_is_per_byte_for_wide_chars() {
+        let (text, map) = crate::display::render_line("あい".as_bytes(), 8);
+        assert_eq!(text, "あい");
+        // マルチバイト文字の途中にもエントリがある (長さ = バイト数 + 1)。
+        assert_eq!(map.len(), "あい".len() + 1);
+        assert_eq!(map.as_slice(), &[0, 0, 0, 2, 2, 2, 4]);
+    }
+
+    #[test]
+    fn cursor_column_is_correct_after_japanese_paste() {
+        let mut ed = Editor::new(Box::new(ScriptedIo::new()), 24, 80);
+        ed.buffer_mut().insert_bytes("あいうえお".as_bytes());
+        ed.buffer_mut().goto_bob();
+        // 「え」の手前 (バイトオフセット 9 = 表示列 6)
+        ed.buffer_mut().dot = crate::buffer::Pos::new(0, 9);
+        let f = frame(&mut ed);
+        assert_eq!(f.cursor_col, 6);
+        // 行末 (オフセット 15 = 表示列 10)
+        ed.buffer_mut().dot = crate::buffer::Pos::new(0, 15);
+        let f = frame(&mut ed);
+        assert_eq!(f.cursor_col, 10);
+    }
+
+    #[test]
+    fn selection_covers_wide_chars_correctly() {
+        let mut ed = Editor::new(Box::new(ScriptedIo::new()), 24, 80);
+        ed.buffer_mut().insert_bytes("あいうえお".as_bytes());
+        ed.buffer_mut().goto_bob();
+        // 「い」の先頭 (バイト 3) から「え」の先頭 (バイト 9) まで。
+        ed.buffer_mut().mark = Some(crate::buffer::Pos::new(0, 3));
+        ed.buffer_mut().dot = crate::buffer::Pos::new(0, 9);
+        let f = frame(&mut ed);
+        assert_eq!(f.sel[0], vec![false, true, true, false, false]);
+    }
+
+    #[test]
     fn frame_rows_never_exceed_screen_width_with_wide_chars() {
         let mut ed = Editor::new(Box::new(ScriptedIo::new()), 24, 20);
         ed.show_line_numbers = true;
@@ -495,5 +610,49 @@ mod modeline_tests {
             );
         }
         assert!(display_width(&f.message) <= ed.screen_cols);
+    }
+
+    #[test]
+    fn frame_marks_mouse_selection() {
+        let mut ed = Editor::new(Box::new(ScriptedIo::new()), 24, 80);
+        ed.buffer_mut().insert_bytes(b"abcdef\nghijkl\nmnopqr\n");
+        ed.buffer_mut().goto_bob();
+        ed.buffer_mut().mark = Some(crate::buffer::Pos::new(0, 2));
+        ed.buffer_mut().dot = crate::buffer::Pos::new(1, 3);
+        let f = frame(&mut ed);
+        assert_eq!(f.sel[0], vec![false, false, true, true, true, true]);
+        // 2行目は 3 バイト目まで (領域は 0 行目の 2 文字目から 1 行目の 3 文字目)。
+        assert_eq!(f.sel[1], vec![true, true, true, false, false, false]);
+        assert_eq!(f.sel[2], vec![false; 6]);
+    }
+
+    #[test]
+    fn selection_changes_only_redraws_affected_rows() {
+        let mut ed = Editor::new(Box::new(ScriptedIo::new()), 24, 80);
+        ed.buffer_mut().insert_bytes(b"abcdef\nghijkl\nmnopqr\n");
+        ed.buffer_mut().goto_bob();
+        ed.buffer_mut().mark = Some(crate::buffer::Pos::new(0, 2));
+        let before = frame(&mut ed);
+        // ドラッグはテキストを変えないが、選択範囲は変わる。
+        ed.buffer_mut().dot = crate::buffer::Pos::new(1, 3);
+        let after = frame(&mut ed);
+        assert_eq!(before.rows, after.rows);
+        assert_eq!(changed_rows(Some(&before), &after), vec![0, 1]);
+    }
+
+    #[test]
+    fn gutter_is_not_highlighted() {
+        let mut ed = Editor::new(Box::new(ScriptedIo::new()), 24, 80);
+        ed.show_line_numbers = true;
+        ed.line_number_width = 6;
+        ed.buffer_mut().insert_bytes(b"abcdef\nghijkl\n");
+        ed.buffer_mut().goto_bob();
+        ed.buffer_mut().mark = Some(crate::buffer::Pos::new(0, 0));
+        ed.buffer_mut().dot = crate::buffer::Pos::new(0, 2);
+        let f = frame(&mut ed);
+        // 行は "     1 abcdef" (ガーター 6 + 本文 6)。ガーターは選択外。
+        assert_eq!(&f.rows[0][..12], "    1 abcdef");
+        assert_eq!(f.sel[0][..6], [false; 6]);
+        assert_eq!(&f.sel[0][6..9], [true, true, false]);
     }
 }
