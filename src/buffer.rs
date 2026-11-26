@@ -5,6 +5,7 @@
 use crate::crypt::{strong_decrypt, strong_encrypt, Cipher, CryptKind};
 use crate::encoding::{self, Code, Eol};
 use crate::keycode::Status;
+use std::collections::VecDeque;
 
 /// 行番号 + バイトオフセット。C 版の (LINE *, offset) の代わりに使う。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -41,8 +42,10 @@ pub const MODE_NAMES: [&str; 12] = [
 ];
 pub const MODE_CODES: [u8; 12] = *b"WCPSEVODMYAB";
 
-/// undo / redo 用のスナップショット。C 版はコマンド境界ごとにレコードを
-/// まとめるが、同じ粒度を「1 コマンド = 1 スナップショット」で実現する。
+/// コマンド実行「前」の状態を一時的に保持するスナップショット。
+/// undo 履歴には積まず、`record_undo()` が差分へ変換したのち破棄する。
+/// C 版はコマンド境界ごとにレコードをまとめるが、同じ粒度を
+/// 「1 コマンド = 1 エントリ」で実現する。
 #[derive(Clone, PartialEq, Eq)]
 pub struct Snapshot {
     pub lines: Vec<Vec<u8>>,
@@ -56,6 +59,130 @@ pub struct Snapshot {
     pub password: Option<Vec<u8>>,
 }
 
+/// Snapshot から位置・モード・暗号鍵だけを抜き出した軽量メタデータ。
+#[derive(Clone, PartialEq, Eq)]
+struct UndoMeta {
+    dot: Pos,
+    mark: Option<Pos>,
+    fname: Option<String>,
+    mode: u32,
+    flags: u8,
+    key: Option<Vec<u8>>,
+    crypt: CryptKind,
+    password: Option<Vec<u8>>,
+}
+
+impl UndoMeta {
+    fn from_snapshot(s: &Snapshot) -> Self {
+        UndoMeta {
+            dot: s.dot,
+            mark: s.mark,
+            fname: s.fname.clone(),
+            mode: s.mode,
+            flags: s.flags,
+            key: s.key.clone(),
+            crypt: s.crypt,
+            password: s.password.clone(),
+        }
+    }
+
+    fn from_buffer(b: &Buffer) -> Self {
+        UndoMeta {
+            dot: b.dot,
+            mark: b.mark,
+            fname: b.fname.clone(),
+            mode: b.mode,
+            flags: b.flags,
+            key: b.key.clone(),
+            crypt: b.crypt,
+            password: b.password.clone(),
+        }
+    }
+
+    fn apply_to(&self, b: &mut Buffer) {
+        b.dot = self.dot;
+        b.mark = self.mark;
+        b.fname = self.fname.clone();
+        b.mode = self.mode;
+        b.flags = self.flags;
+        b.key = self.key.clone();
+        b.crypt = self.crypt;
+        b.password = self.password.clone();
+    }
+}
+
+impl std::fmt::Debug for UndoMeta {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UndoMeta")
+            .field("dot", &self.dot)
+            .field("mark", &self.mark)
+            .field("fname", &self.fname)
+            .field("mode", &self.mode)
+            .field("flags", &self.flags)
+            .field("key", &self.key.as_ref().map(|_| "<redacted>"))
+            .field("crypt", &self.crypt)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
+/// 1 コマンドぶんの差分。共通の行・バイトは長さだけ保持し、実際に
+/// 増減したバイト列だけを残すため、長いファイルでも undo 履歴が
+/// 行全体のコピーで膨らまない。
+#[derive(Clone, Debug)]
+pub struct UndoEntry {
+    head: usize,
+    tail: usize,
+    prefix: usize,
+    suffix: usize,
+    old_mid: Vec<u8>,
+    new_mid: Vec<u8>,
+    old_region_lines: usize,
+    new_region_lines: usize,
+    meta: UndoMeta,
+}
+
+impl UndoEntry {
+    /// 差分そのものは変えず、戻り先の状態メタデータだけ差し替える。
+    /// 同じエントリを undo では旧状態へ、redo では新状態へ適用する。
+    fn with_meta(&self, meta: UndoMeta) -> Self {
+        UndoEntry {
+            meta,
+            ..self.clone()
+        }
+    }
+}
+
+/// 行配列を改行で連結する (差分計算用の一時表現)。
+fn join_lines(lines: &[Vec<u8>]) -> Vec<u8> {
+    let len = lines.iter().map(|l| l.len()).sum::<usize>() + lines.len().saturating_sub(1);
+    let mut out = Vec::with_capacity(len);
+    for (i, line) in lines.iter().enumerate() {
+        if i > 0 {
+            out.push(b'\n');
+        }
+        out.extend_from_slice(line);
+    }
+    out
+}
+
+/// 連結されたバイト列を `count` 行へ戻す。
+fn split_region(bytes: &[u8], count: usize) -> Vec<Vec<u8>> {
+    if count == 0 {
+        return Vec::new();
+    }
+    if bytes.is_empty() {
+        return vec![Vec::new(); count];
+    }
+    let mut lines: Vec<Vec<u8>> = bytes.split(|&c| c == b'\n').map(|s| s.to_vec()).collect();
+    if lines.len() < count {
+        lines.resize(count, Vec::new());
+    } else if lines.len() > count {
+        lines.truncate(count);
+    }
+    lines
+}
+
 #[derive(Clone)]
 pub struct Buffer {
     pub name: String,
@@ -67,8 +194,8 @@ pub struct Buffer {
     pub mode: u32,
     pub flags: u8,
     pub nwnd: usize,
-    pub undo: Vec<Snapshot>,
-    pub redo: Vec<Snapshot>,
+    pub undo: VecDeque<UndoEntry>,
+    pub redo: VecDeque<UndoEntry>,
     pub undo_limit: usize,
     pub code: Code,
     pub eol: Eol,
@@ -135,8 +262,8 @@ impl Buffer {
             // quit() の未保存確認から漏れてしまう。
             flags: 0,
             nwnd: 0,
-            undo: Vec::new(),
-            redo: Vec::new(),
+            undo: VecDeque::new(),
+            redo: VecDeque::new(),
             undo_limit: 0,
             code: Code::Utf8,
             eol: Eol::Lf,
@@ -631,33 +758,114 @@ impl Buffer {
         self.lines == s.lines
     }
 
-    pub fn record_undo(&mut self, s: Snapshot) {
+    /// 変更前に取得したスナップショット `before` を差分へ変換して履歴に積む。
+    /// 呼び出しは必ず変更「後」に行うこと (差分は現在状態との比較で決まる)。
+    pub fn record_undo(&mut self, before: Snapshot) {
+        let entry = self.make_undo_entry(&before);
         if self.undo_limit > 0 && self.undo.len() >= self.undo_limit {
-            self.undo.remove(0);
+            self.undo.pop_front();
         }
-        self.undo.push(s);
+        self.undo.push_back(entry);
         self.redo.clear();
     }
 
+    /// undo / redo 履歴が実際に保持している差分バイト数の合計。
+    pub fn undo_bytes(&self) -> usize {
+        let sum = |q: &VecDeque<UndoEntry>| -> usize {
+            q.iter().map(|e| e.old_mid.len() + e.new_mid.len()).sum()
+        };
+        sum(&self.undo) + sum(&self.redo)
+    }
+
+    fn make_undo_entry(&self, before: &Snapshot) -> UndoEntry {
+        let a = &before.lines;
+        let b = &self.lines;
+        // 先頭と末尾の共通行を除く
+        let mut head = 0usize;
+        let max = a.len().min(b.len());
+        while head < max && a[head] == b[head] {
+            head += 1;
+        }
+        let mut tail = 0usize;
+        while tail < a.len() - head
+            && tail < b.len() - head
+            && a[a.len() - 1 - tail] == b[b.len() - 1 - tail]
+        {
+            tail += 1;
+        }
+        let a_region = &a[head..a.len() - tail];
+        let b_region = &b[head..b.len() - tail];
+        let a_bytes = join_lines(a_region);
+        let b_bytes = join_lines(b_region);
+        // 行内でも先頭・末尾の共通バイトを除き、増減した部分だけ残す
+        let mut prefix = 0usize;
+        let m = a_bytes.len().min(b_bytes.len());
+        while prefix < m && a_bytes[prefix] == b_bytes[prefix] {
+            prefix += 1;
+        }
+        let mut suffix = 0usize;
+        while suffix < a_bytes.len() - prefix
+            && suffix < b_bytes.len() - prefix
+            && a_bytes[a_bytes.len() - 1 - suffix] == b_bytes[b_bytes.len() - 1 - suffix]
+        {
+            suffix += 1;
+        }
+        UndoEntry {
+            head,
+            tail,
+            prefix,
+            suffix,
+            old_mid: a_bytes[prefix..a_bytes.len() - suffix].to_vec(),
+            new_mid: b_bytes[prefix..b_bytes.len() - suffix].to_vec(),
+            old_region_lines: a_region.len(),
+            new_region_lines: b_region.len(),
+            meta: UndoMeta::from_snapshot(before),
+        }
+    }
+
+    fn apply_entry(&mut self, e: &UndoEntry, to_old: bool) {
+        let cur_len = self.lines.len();
+        let start = e.head.min(cur_len);
+        let end = cur_len.saturating_sub(e.tail).max(start);
+        // 共通部分のバイトは現在の行から借りる (履歴には持たない)
+        let region = join_lines(&self.lines[start..end]);
+        let prefix_end = e.prefix.min(region.len());
+        let suffix_start = region.len().saturating_sub(e.suffix).max(prefix_end);
+        let mid = if to_old { &e.old_mid } else { &e.new_mid };
+        let mut bytes = Vec::with_capacity(prefix_end + mid.len() + region.len() - suffix_start);
+        bytes.extend_from_slice(&region[..prefix_end]);
+        bytes.extend_from_slice(mid);
+        bytes.extend_from_slice(&region[suffix_start..]);
+        let count = if to_old {
+            e.old_region_lines
+        } else {
+            e.new_region_lines
+        };
+        let replacement = split_region(&bytes, count);
+        self.lines.splice(start..end, replacement);
+        e.meta.apply_to(self);
+        self.clamp_dot();
+    }
+
     pub fn undo(&mut self) -> bool {
-        let Some(prev) = self.undo.pop() else {
+        let Some(prev) = self.undo.pop_back() else {
             return false;
         };
-        let cur = self.snapshot();
-        self.restore(&prev);
+        let cur = UndoMeta::from_buffer(self);
+        self.apply_entry(&prev, true);
         if self.undo_limit == 0 || self.redo.len() < self.undo_limit {
-            self.redo.push(cur);
+            self.redo.push_back(prev.with_meta(cur));
         }
         true
     }
 
     pub fn redo(&mut self) -> bool {
-        let Some(next) = self.redo.pop() else {
+        let Some(next) = self.redo.pop_back() else {
             return false;
         };
-        let cur = self.snapshot();
-        self.restore(&next);
-        self.undo.push(cur);
+        let cur = UndoMeta::from_buffer(self);
+        self.apply_entry(&next, false);
+        self.undo.push_back(next.with_meta(cur));
         true
     }
 
@@ -890,8 +1098,9 @@ mod tests {
     fn undo_redo_restore_text_and_cursor() {
         let mut b = Buffer::new("t");
         b.insert_bytes(b"one");
-        b.record_undo(b.snapshot());
+        let before = b.snapshot();
         b.insert_bytes(b"two");
+        b.record_undo(before);
         assert_eq!(b.text(), b"onetwo");
         assert!(b.undo());
         assert_eq!(b.text(), b"one");

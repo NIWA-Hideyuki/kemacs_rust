@@ -146,6 +146,57 @@ fn buffer_undo_redo_stress_with_limit() {
 }
 
 #[test]
+fn undo_history_stores_deltas_not_full_buffers() {
+    let mut b = Buffer::new("delta");
+    let base = "あ".repeat(20_000); // 60 KB の 1 行
+    assert!(b.insert_bytes(base.as_bytes()));
+    b.undo.clear();
+    b.redo.clear();
+    for i in 0..200 {
+        let before = b.snapshot();
+        assert!(b.insert_bytes(format!("{}", i % 10).as_bytes()));
+        b.record_undo(before);
+    }
+    assert_eq!(b.undo.len(), 200);
+    // 全コピー方式なら 200 * 60KB = 12MB 超。差分は数 KB に収まる。
+    assert!(b.undo_bytes() < 8_000, "undo_bytes = {}", b.undo_bytes());
+    for _ in 0..200 {
+        assert!(b.undo());
+    }
+    assert_eq!(b.text(), base.as_bytes());
+    let digits: String = (0..200)
+        .map(|i| char::from(b'0' + (i % 10) as u8))
+        .collect();
+    for _ in 0..200 {
+        assert!(b.redo());
+    }
+    assert_eq!(b.text(), format!("{}{}", base, digits).as_bytes());
+}
+
+#[test]
+fn undo_redo_restores_multiline_delta() {
+    let mut b = Buffer::new("ml");
+    b.insert_bytes(b"alpha\nbeta\ngamma");
+    let before = b.snapshot();
+    b.dot = Pos::new(0, 5);
+    assert!(b.insert_bytes(b"\nINSERT"));
+    b.record_undo(before);
+    assert_eq!(b.text(), b"alpha\nINSERT\nbeta\ngamma");
+    assert!(b.undo());
+    assert_eq!(b.text(), b"alpha\nbeta\ngamma");
+    assert!(b.redo());
+    assert_eq!(b.text(), b"alpha\nINSERT\nbeta\ngamma");
+
+    let before = b.snapshot();
+    b.lines.remove(1);
+    b.clamp_dot();
+    b.record_undo(before);
+    assert_eq!(b.text(), b"alpha\nbeta\ngamma");
+    assert!(b.undo());
+    assert_eq!(b.text(), b"alpha\nINSERT\nbeta\ngamma");
+}
+
+#[test]
 fn buffer_multiline_region_integrity() {
     let mut b = Buffer::new("region");
     b.insert_bytes(b"one\ntwo\nthree");

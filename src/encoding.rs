@@ -2,6 +2,8 @@
 //! UTF-8 を内部表現とし、読み込み時に変換・書き出し時に逆変換する。
 //! 変換できないバイトは素通しすることでラウンドトリップを保証する。
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_void};
 
@@ -19,7 +21,7 @@ extern "C" {
 
 const CONV_ERR: usize = usize::MAX;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Code {
     #[default]
     Utf8,
@@ -219,22 +221,46 @@ const ESC_LITERAL: &str = "KEMACS-L;";
 /// マーカー共用の接頭辞そのものを表すエスケープ。
 const ESC_PREFIX: &str = "KEMACS-B;";
 
+/// iconv の往復判定結果を文字単位でキャッシュする。
+/// 保存時に 1 文字ごと iconv_open を 2 回呼ぶのを防ぐ。
+const ENCODABLE_CACHE_LIMIT: usize = 4096;
+
+thread_local! {
+    static ENCODABLE_CACHE: RefCell<HashMap<(char, Code), bool>> = RefCell::new(HashMap::new());
+}
+
 fn char_encodable(ch: char, code: Code) -> bool {
     if code == Code::Utf8 {
         return true;
     }
-    let mut buf = [0u8; 4];
-    let src = ch.encode_utf8(&mut buf).as_bytes();
-    match convert(src, "UTF-8", code.iconv_name()) {
-        Some(out) => convert(&out, code.iconv_name(), "UTF-8").as_deref() == Some(src),
-        None => false,
-    }
+    ENCODABLE_CACHE.with(|cache| {
+        if let Some(&v) = cache.borrow().get(&(ch, code)) {
+            return v;
+        }
+        let mut buf = [0u8; 4];
+        let src = ch.encode_utf8(&mut buf).as_bytes();
+        let v = match convert(src, "UTF-8", code.iconv_name()) {
+            Some(out) => convert(&out, code.iconv_name(), "UTF-8").as_deref() == Some(src),
+            None => false,
+        };
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= ENCODABLE_CACHE_LIMIT {
+            cache.clear();
+        }
+        cache.insert((ch, code), v);
+        v
+    })
 }
 
 /// 文字コードで表現できない Unicode 文字を `~@KEMACS-U+XXXX;` に変換する。
 /// マーカー文字列も退避するため往復が可逆。
 pub fn from_utf8(bytes: &[u8], code: Code) -> Vec<u8> {
     let text = String::from_utf8_lossy(bytes).replace("KEMACS-", ESC_PREFIX);
+    if code == Code::Utf8 {
+        // 全文字が表現可能で、convert_lossless(UTF-8 -> UTF-8) もコピーなので
+        // 文字ごとの判定ループを丸ごと飛ばす。
+        return text.into_bytes();
+    }
     let mut result = String::with_capacity(text.len());
     let mut i = 0usize;
     while i < text.len() {
@@ -344,5 +370,31 @@ mod tests {
         assert_eq!(Code::parse("UJIS"), (Code::Ujis, Eol::Lf));
         assert_eq!(Code::parse("SJIS"), (Code::Sjis, Eol::Lf));
         assert_eq!(Code::detect("日本語".as_bytes()), Code::Utf8);
+    }
+
+    #[test]
+    fn encodable_cache_matches_uncached_result() {
+        let chars = ['日', '本', '語', '😀', 'Ａ', '１', 'あ', '\u{0301}'];
+        for code in [Code::Sjis, Code::Ujis, Code::Jis] {
+            for _ in 0..3 {
+                for &ch in &chars {
+                    let mut buf = [0u8; 4];
+                    let src = ch.encode_utf8(&mut buf).as_bytes();
+                    let expected = match convert(src, "UTF-8", code.iconv_name()) {
+                        Some(out) => {
+                            convert(&out, code.iconv_name(), "UTF-8").as_deref() == Some(src)
+                        }
+                        None => false,
+                    };
+                    assert_eq!(
+                        char_encodable(ch, code),
+                        expected,
+                        "ch={} code={:?}",
+                        ch,
+                        code
+                    );
+                }
+            }
+        }
     }
 }
