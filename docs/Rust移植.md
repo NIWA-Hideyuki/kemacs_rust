@@ -48,6 +48,10 @@ C 版互換の起動オプションも使えます (例: `cargo run -- -v -g 50 
 - **エンコーディング変換** (`src/encoding.rs`): UTF-8 / UJIS (EUC-JP) / SJIS / JIS
   (ISO-2022-JP) の iconv 変換と改行種別 (LF / CR / CRLF)。`$bcode` / `$fcode` で設定。
   未編集ファイルは元バイト列をそのまま保存し、変換できないバイトは素通しする。
+  自動判定は ISO-2022-JP のエスケープ列 (`ESC $ B` 等) を UTF-8 判定より先に
+  確認する (JIS は 7bit ASCII だけなので、後に回すと常に UTF-8 と誤判定される)。
+  UJIS / SJIS / JIS の強化テストは `tests/encodings.rs` (9 件) と
+  `tests/pty_smoke.py` の `code_*` (5 件) に常置した。
 - **暗号化** (`src/crypt.rs`): DLH-POLY-86-B (Beaufort) を C 版と同じアルゴリズムで実装。
   `M-E` (`setcrkey`) でキーを設定すると CRYPT モードになり、保存時に暗号化・読込時に復号。
 - **自動保存**: ASAVE モードで `$asave` 文字ごとに `#ファイル名#` へ書き出す

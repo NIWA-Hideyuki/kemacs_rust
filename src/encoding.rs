@@ -72,8 +72,14 @@ impl Code {
         (code, eol)
     }
 
-    /// バイト列から符号化方式を推定する (UTF-8 -> SJIS -> EUC-JP -> JIS)。
+    /// バイト列から符号化方式を推定する (JIS エスケープ列 -> UTF-8 -> SJIS -> EUC-JP)。
     pub fn detect(bytes: &[u8]) -> Self {
+        // ISO-2022-JP は 7bit ASCII + エスケープ列だけなので、UTF-8 の妥当性
+        // 判定を先に行うと必ず UTF-8 と誤判定される。エスケープ列を先に見る。
+        const JIS_ESC: [&[u8]; 4] = [b"\x1b$B", b"\x1b$@", b"\x1b(J", b"\x1b(I"];
+        if bytes.windows(3).any(|w| JIS_ESC.contains(&w)) {
+            return Code::Jis;
+        }
         if std::str::from_utf8(bytes).is_ok() {
             return Code::Utf8;
         }
