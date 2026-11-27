@@ -66,9 +66,24 @@ crates.io への `cargo publish` は行わないでください。LICENSE が非
 ## テスト
 
 ```sh
+cargo fmt --all -- --check
 cargo test
 cargo clippy --all-targets -- -D warnings
 ```
+
+端末操作 (マウス選択・クリップボード・プレビュー・リサイズなど) の回帰テストは
+Python の PTY スモークテストとして `tests/pty_smoke.py` にあります。
+
+```sh
+cargo build
+python3 tests/pty_smoke.py          # 全ケース
+python3 tests/pty_smoke.py --list   # ケース一覧
+python3 tests/pty_smoke.py --only mouse_select   # 1 ケースだけ
+```
+
+詳細は [`tests/PTY回帰テスト.md`](tests/PTY回帰テスト.md) を参照してください。
+これらのコマンドは GitHub Actions (`.github/workflows/ci.yml`) でも
+push / pull request ごとに自動実行されます。
 
 ## 主な機能
 
