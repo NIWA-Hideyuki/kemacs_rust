@@ -16,7 +16,7 @@ pub fn default_bindings() -> Vec<(Ckey, &'static str)> {
     vec![
         (ctl(b'A'), "gotobol"),
         (ctl(b'B'), "backchar"),
-        (ctl(b'C'), "exitrecedit"),
+        (ctl(b'C'), "shell-escape"),
         (ctl(b'D'), "forwdel"),
         (ctl(b'E'), "gotoeol"),
         (ctl(b'F'), "forwchar"),
@@ -153,6 +153,9 @@ const EXTRA: &[&str] = &[
     "quit",
     "quickexit",
     "ctrlg",
+    "automode",
+    "auto-mode-for-file",
+    "shell-escape",
     "sreplace",
     "qreplace",
     "setvar",
@@ -269,6 +272,18 @@ const EXTRA: &[&str] = &[
     "wordcount",
     "smart_indent",
 ];
+
+/// M-X 補完に渡す全コマンド名 (重複なし・ソート済み)。
+pub fn all_command_names() -> Vec<String> {
+    let mut names: Vec<String> = EXTRA
+        .iter()
+        .map(|s| (*s).to_string())
+        .chain(default_bindings().into_iter().map(|(_, n)| n.to_string()))
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
 
 pub fn known_command(name: &str) -> bool {
     EXTRA.contains(&name) || default_bindings().iter().any(|(_, n)| *n == name)
@@ -408,7 +423,13 @@ pub fn dispatch(ed: &mut Editor, name: &str, f: bool, n: i32) -> Status {
 
         // ファイル / バッファ / ウィンドウ / その他
         "quit" => extra::quit(ed, f),
-        "quickexit" => extra::quickexit(ed, f, n),
+        "quickexit" => {
+            if ed.restricted {
+                ed.mlwrite("[Restricted]");
+                return St::False;
+            }
+            extra::quickexit(ed, f, n)
+        }
         "exitrecedit" => {
             if crate::system::preview_abort(ed) {
                 St::True
@@ -958,6 +979,92 @@ mod tests {
 
     fn ed() -> Editor {
         Editor::new(Box::new(Quiet), 24, 80)
+    }
+
+    #[test]
+    fn query_replace_caret_undoes_last_replacement() {
+        let mut e = Editor::new(
+            Box::new(crate::input::ScriptedIo::with_prompts(&[
+                "a", "b", "y", "y", "^", "y", "q",
+            ])),
+            24,
+            80,
+        );
+        e.buffer_mut().insert_bytes(b"a a a");
+        e.buffer_mut().goto_bob();
+        assert_eq!(e.run("qreplace"), St::True);
+        assert_eq!(e.buffer().text(), b"b b a");
+        assert_eq!(e.message, "Replaced 2 occurrence(s)");
+    }
+
+    #[test]
+    fn named_command_completion_uses_candidate_list() {
+        let names = all_command_names();
+        assert!(names.contains(&"toggle-color".to_string()));
+        assert!(names.contains(&"automode".to_string()));
+        // 重複・順序が保証されている。
+        assert!(names.windows(2).all(|w| w[0] <= w[1]));
+        let mut e = Editor::new(
+            Box::new(crate::input::ScriptedIo::with_prompts(&["toggle-color"])),
+            24,
+            80,
+        );
+        assert_eq!(e.run("namedcmd"), St::True);
+        assert!(e.color_on);
+    }
+
+    #[test]
+    fn auto_mode_for_file_registers_regexp() {
+        let mut e = Editor::new(
+            Box::new(crate::input::ScriptedIo::with_prompts(&[
+                "CMODE",
+                ".*\\.txt$",
+            ])),
+            24,
+            80,
+        );
+        assert_eq!(e.run("automode"), St::True);
+        assert_eq!(e.auto_mode_patterns.len(), 1);
+        crate::modes::auto_mode(&mut e, 0, "notes.txt");
+        assert_ne!(e.buffers[0].mode & crate::buffer::MDCMOD, 0);
+        let mut e2 = Editor::new(Box::new(crate::input::ScriptedIo::new()), 24, 80);
+        crate::modes::auto_mode(&mut e2, 0, "notes.txt");
+        assert_eq!(e2.buffers[0].mode & crate::buffer::MDCMOD, 0);
+    }
+
+    #[test]
+    fn caret_c_launches_shell_escape() {
+        let e = ed();
+        assert_eq!(e.keymap.get(&ctl(b'C')).copied(), Some("shell-escape"));
+        assert!(known_command("exitrecedit"));
+    }
+
+    #[test]
+    fn restricted_mode_blocks_file_and_shell_commands() {
+        let mut e = ed();
+        e.restricted = true;
+        for name in [
+            "filefind",
+            "viewfile",
+            "fileread",
+            "insfile",
+            "filesave",
+            "filewrite",
+            "spawn",
+            "spawncli",
+            "bktoshell",
+            "shell-escape",
+            "pipecmd",
+            "filter",
+            "quickexit",
+            "execfile",
+        ] {
+            assert_eq!(e.run(name), St::False, "{} should be blocked", name);
+        }
+        assert_eq!(e.message, "[Restricted]");
+        // 編集系コマンドはそのまま使える。
+        e.buffer_mut().insert_bytes(b"x");
+        assert_eq!(e.buffer().text(), b"x");
     }
 
     #[test]

@@ -5,7 +5,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::{St, CFKILL};
-use crate::buffer::{Buffer, Pos, BFCHG, BFINVS, MDEXACT, MDVIEW, MODE_CODES, MODE_NAMES};
+use crate::buffer::{
+    Buffer, Pos, Snapshot, BFCHG, BFINVS, MDEXACT, MDVIEW, MODE_CODES, MODE_NAMES,
+};
 use crate::editor::Editor;
 use crate::keycode::Status;
 use crate::keycode::{code, ctl, flags};
@@ -347,25 +349,24 @@ pub fn replace_cmd(ed: &mut Editor, query: bool) -> Status {
     let rep = to.into_bytes();
     ed.search_pattern = pat.clone();
     let exact = ed.buffer().mode & MDEXACT != 0;
+    let magic = ed.buffer().mode & crate::buffer::MDMAGIC != 0;
     let mut count = 0usize;
     let mut replace_all = false;
+    // query-replace セッション全体は 1 つの undo エントリだが、`^` で
+    // 直前の 1 件だけを戻せるよう、置換ごとのスナップショットを別に持つ。
+    let mut history: Vec<(Snapshot, Pos)> = Vec::new();
     loop {
         let start = ed.buffer().dot;
         let b = ed.buffer();
-        let Some((m, e)) = search::find_mode(
-            &b.lines,
-            start,
-            &pat,
-            Direction::Forward,
-            exact,
-            ed.buffer().mode & crate::buffer::MDMAGIC != 0,
-        ) else {
+        let Some((m, e)) =
+            search::find_mode(&b.lines, start, &pat, Direction::Forward, exact, magic)
+        else {
             break;
         };
         if query && !replace_all {
             let ans = ed
                 .prompt(
-                    &format!("Replace '{}'? (y/n/!/q): ", String::from_utf8_lossy(&pat)),
+                    &format!("Replace '{}'? (y/n/^/!/q): ", String::from_utf8_lossy(&pat)),
                     None,
                 )
                 .unwrap_or_default();
@@ -376,9 +377,23 @@ pub fn replace_cmd(ed: &mut Editor, query: bool) -> Status {
                 }
                 Some('q') | Some('Q') => break,
                 Some('!') => replace_all = true,
+                // C 版の 'u' (undo last) 相当。日本語版の `^` も受け付ける。
+                Some('^') | Some('u') | Some('U') => {
+                    if let Some((snap, pos)) = history.pop() {
+                        ed.buffer_mut().restore(&snap);
+                        ed.buffer_mut().dot = pos;
+                        ed.buffer_mut().mark = Some(pos);
+                        count = count.saturating_sub(1);
+                    } else {
+                        ed.mlwrite("Nothing to undo");
+                    }
+                    // 同じ一致位置から再検索して再確認する。
+                    continue;
+                }
                 _ => {}
             }
         }
+        history.push((ed.buffer().snapshot(), m));
         ed.buffer_mut().mark = Some(m);
         ed.buffer_mut().dot = e;
         ed.buffer_mut().replace_region(&rep);
@@ -495,7 +510,40 @@ fn buffer_menu(ed: &mut Editor, title: &str, lines: Vec<String>) {
     ed.set_window_buffer(bi);
 }
 
+/// C 版 `resterr()` 相当。制限モードで禁止されたコマンドを弾く。
+fn restricted(ed: &mut Editor) -> bool {
+    if ed.restricted {
+        ed.mlwrite("[Restricted]");
+        true
+    } else {
+        false
+    }
+}
+
+/// 制限モードで禁止するコマンド (C 版 file.C_ / spawn.C_ / exec.C_ の restflag 相当)。
+const RESTRICTED_CMDS: &[&str] = &[
+    "filefind",
+    "viewfile",
+    "fileread",
+    "insfile",
+    "filesave",
+    "filewrite",
+    "filename",
+    "quickexit",
+    "spawn",
+    "spawncli",
+    "bktoshell",
+    "shell-escape",
+    "pipecmd",
+    "filter",
+    "md_preview",
+    "execfile",
+];
+
 pub fn dispatch(ed: &mut Editor, name: &str, f: bool, n: i32) -> Status {
+    if RESTRICTED_CMDS.contains(&name) && restricted(ed) {
+        return St::False;
+    }
     match name {
         "filefind" => {
             let Some(p) = prompt_file(ed, "Find file: ") else {
@@ -811,7 +859,8 @@ pub fn dispatch(ed: &mut Editor, name: &str, f: bool, n: i32) -> Status {
             St::True
         }
         "namedcmd" => {
-            let Some(ans) = ed.prompt("M-x ", None) else {
+            let names = crate::commands::all_command_names();
+            let Some(ans) = ed.prompt_completion("M-x ", &names) else {
                 return St::False;
             };
             let name = ans.trim();
@@ -820,6 +869,31 @@ pub fn dispatch(ed: &mut Editor, name: &str, f: bool, n: i32) -> Status {
             } else {
                 ed.mlwrite(format!("[No such command: {}]", name));
                 St::False
+            }
+        }
+        "automode" | "auto-mode-for-file" => {
+            let Some(ans) = ed.prompt("Mode to add: ", None) else {
+                return St::False;
+            };
+            let up = ans.trim().to_ascii_uppercase();
+            let Some(i) = MODE_NAMES.iter().position(|m| *m == up) else {
+                ed.mlwrite("No such mode!");
+                return St::False;
+            };
+            let Some(pat) = ed.prompt("Pattern: ", None) else {
+                ed.mlwrite("[Aborted]");
+                return St::False;
+            };
+            match crate::regex::Regex::compile(pat.as_bytes()) {
+                Ok(re) => {
+                    ed.auto_mode_patterns.push((re, 1u32 << i));
+                    ed.mlwrite(format!("Auto mode added: {}", up));
+                    St::True
+                }
+                Err(_) => {
+                    ed.mlwrite("[Bad pattern]");
+                    St::False
+                }
             }
         }
         "bindtokey" => {
@@ -915,6 +989,7 @@ pub fn dispatch(ed: &mut Editor, name: &str, f: bool, n: i32) -> Status {
         "getfence" => St::False,
         "spawn" => crate::system::spawn(ed),
         "spawncli" => crate::system::spawncli(ed),
+        "shell-escape" => crate::system::shell_escape_shell(ed),
         "bktoshell" => crate::system::bktoshell(ed),
         "pipecmd" => crate::system::pipecmd(ed),
         "filter" => crate::system::filter(ed),

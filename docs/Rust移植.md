@@ -234,19 +234,26 @@ preview の部分行/CRLF、長行・日本語ファイル名、ガーター描�
 - キー割当て: C 版 `ebind.H_` との機械比較で欠落していた `C-X @` (pipecmd)、
   `C-X #` (filter)、`C-X D` / `M-S` (bktoshell)、`M-C-E` (execproc) を追加。
 - 起動オプション: `-v` / `-V`、`-e` / `-E`、`-b`、`-g<line>`、`-x<command>`、
-  `-f<code>` / `-t<code>`、`-r` / `-R`、`@file` を解釈。
+  `-f<code>` / `-t<code>`、`-r` / `-R`、`@file` を解釈。`-s` / `-k` は
+  raw mode 開始後に `StartupAction` として実行する。
 - `~/.kemacsrc` を起動時に自動実行 (C 版の startup() 相当)。
-- モードライン書式 `%t` / `%T`、`%<` / `%>` を実装。`$gmodeline` /
-  `$bmodeline` は `$mode-line-format` の別名として読み書き可能。
-- query-replace の `!` (以降すべて置換) を実装。
+- モードライン書式 `%t` / `%T`、`%<` / `%>` を実装。`%t` は libc の
+  `localtime_r()` によるローカル時刻、`%<` / `%>` は `reclevel` による
+  再帰レベル。`$gmodeline` / `$bmodeline` は `$mode-line-format` の別名として
+  読み書き可能。
+- query-replace の `!` (以降すべて置換) と `^` (直前の 1 件を戻す) を実装。
+- BINARY モード (`-b` / MDBINARY) は文字コード・改行変換を停止する。
+- 制限モード (`-r` / `-R`) はファイル操作・シェル実行を禁止する。
+- 対話的変数 `@...`、`M-X` 補完、`auto-mode-for-file`、`^C` シェル一時脱出を実装。
+- JIS の新旧・ASCII/ローマ字 (`JIS-NEW-ROMAJI` / `JIS-NEW-ASCII` /
+  `JIS-OLD-ROMAJI` / `JIS-OLD-ASCII`) を切替可能。
+- マウス中ボタンで貼り付け、横スクロールで左右移動する。
 
-## 未移植 (C 版との差分)
+## 残る差分
 
-`-s` / `-k` の起動オプション (対話プロンプトを伴うため raw mode 開始前に実行不可)、
-BINARY モードの変換停止、制限モードのコマンド制限、query-replace の `^`、
-対話的変数、`M-X` 補完、`auto-mode-for-file`、`^C` シェル一時脱出、
-`JIS-NEW-ASCII` / `JIS-OLD-ROMAJI` などが残っています。
-各項目の理由と代替手段は [`rust版とC言語版の違い.md`](rust版とC言語版の違い.md) を参照してください。
+`$tcode` (端末コード) は `$bcode` の別名で、`emacs.hlp` / `emacs.tut` は
+同梱していません。理由と詳細は
+[`rust版とC言語版の違い.md`](rust版とC言語版の違い.md) を参照してください。
 
 ## ソース対応表
 

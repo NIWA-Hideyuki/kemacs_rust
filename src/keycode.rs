@@ -15,6 +15,8 @@ pub const CK_FLAGS: Ckey = CTLFLG | META | CTLX | SPEC | MOUSEFLG;
 /// エンコード形式は `src/mouse.rs` を参照。
 pub const WHEELUP: Ckey = crate::mouse::encode(crate::mouse::MouseKind::WheelUp, 0, 0);
 pub const WHEELDOWN: Ckey = crate::mouse::encode(crate::mouse::MouseKind::WheelDown, 0, 0);
+pub const WHEELLEFT: Ckey = crate::mouse::encode(crate::mouse::MouseKind::WheelLeft, 0, 0);
+pub const WHEELRIGHT: Ckey = crate::mouse::encode(crate::mouse::MouseKind::WheelRight, 0, 0);
 
 /// キーがマウス (ホイール/ボタン) の疑似キーか。
 pub fn is_mouse(k: Ckey) -> bool {
@@ -104,6 +106,14 @@ pub fn cmdstr(k: Ckey) -> String {
             Some(ev) => match ev.kind {
                 crate::mouse::MouseKind::WheelUp => "Wheel-Up".to_string(),
                 crate::mouse::MouseKind::WheelDown => "Wheel-Down".to_string(),
+                crate::mouse::MouseKind::WheelLeft => "Wheel-Left".to_string(),
+                crate::mouse::MouseKind::WheelRight => "Wheel-Right".to_string(),
+                crate::mouse::MouseKind::MiddlePress => {
+                    format!("Mouse-MDown({},{})", ev.col, ev.row)
+                }
+                crate::mouse::MouseKind::MiddleRelease => {
+                    format!("Mouse-MUp({},{})", ev.col, ev.row)
+                }
                 crate::mouse::MouseKind::Press => format!("Mouse-Down({},{})", ev.col, ev.row),
                 crate::mouse::MouseKind::Drag => format!("Mouse-Drag({},{})", ev.col, ev.row),
                 crate::mouse::MouseKind::Release => format!("Mouse-Up({},{})", ev.col, ev.row),

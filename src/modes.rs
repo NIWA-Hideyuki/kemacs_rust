@@ -977,7 +977,15 @@ pub fn md_indent(ed: &mut Editor, n: i32) -> Status {
 /// C 版 pattbl[] によるファイル名パターンでの自動モード設定。
 pub fn auto_mode(ed: &mut Editor, bi: usize, fname: &str) {
     let lower = fname.to_ascii_lowercase();
-    let bit = if lower.ends_with(".c") || lower.ends_with(".h") {
+    let mut bit: Option<u32> = None;
+    // `auto-mode-for-file` で登録した正規表現はすべて評価し、該当する
+    // モードを足す (C 版 pattbl[] と同じく複数一致は OR)。
+    for (re, mode) in &ed.auto_mode_patterns {
+        if re.match_from(fname.as_bytes(), 0, false).is_some() {
+            bit = Some(bit.unwrap_or(0) | *mode);
+        }
+    }
+    let builtin = if lower.ends_with(".c") || lower.ends_with(".h") {
         Some(MDCMOD)
     } else if lower.ends_with(".py") {
         Some(MDPYMOD)
@@ -986,10 +994,13 @@ pub fn auto_mode(ed: &mut Editor, bi: usize, fname: &str) {
     } else {
         None
     };
+    if let Some(b) = builtin {
+        bit = Some(bit.unwrap_or(0) | b);
+    }
     if let Some(b) = bit {
         ed.buffers[bi].mode |= b;
     }
-    if ed.c_auto_detect && bit == Some(MDCMOD) {
+    if ed.c_auto_detect && bit.is_some_and(|b| b & MDCMOD != 0) {
         let save = ed.buffer_index();
         ed.set_window_buffer(bi);
         let _ = c_detect_style(ed, 1);

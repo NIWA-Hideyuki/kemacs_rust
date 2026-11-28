@@ -27,7 +27,14 @@ pub enum Code {
     Utf8,
     Ujis,
     Sjis,
+    /// JIS X 0208 新字 + `ESC ( J` (旧ローマ字)。C 版既定。
     Jis,
+    /// JIS-NEW-ASCII: 新字 + `ESC ( B`。
+    JisNewAscii,
+    /// JIS-OLD-ROMAJI: 旧字 (`ESC $ @`) + `ESC ( J`。
+    JisOldRomaji,
+    /// JIS-OLD-ASCII: 旧字 + `ESC ( B`。
+    JisOldAscii,
 }
 
 impl Code {
@@ -36,8 +43,26 @@ impl Code {
             Code::Utf8 => "UTF-8",
             Code::Ujis => "EUC-JP",
             Code::Sjis => "SHIFT_JIS",
-            Code::Jis => "ISO-2022-JP",
+            Code::Jis | Code::JisNewAscii | Code::JisOldRomaji | Code::JisOldAscii => "ISO-2022-JP",
         }
+    }
+
+    /// ISO-2022-JP のいずれかか。
+    pub fn is_jis(self) -> bool {
+        matches!(
+            self,
+            Code::Jis | Code::JisNewAscii | Code::JisOldRomaji | Code::JisOldAscii
+        )
+    }
+
+    /// 漢字を JIS X 0208-1978 (`ESC $ @`) で出すか。
+    fn jis_old(self) -> bool {
+        matches!(self, Code::JisOldRomaji | Code::JisOldAscii)
+    }
+
+    /// ASCII モードをローマ字 (`ESC ( J`) で出すか。
+    fn jis_romaji(self) -> bool {
+        matches!(self, Code::Jis | Code::JisOldRomaji)
     }
 
     /// C 版 `code_string()` 相当の名前。
@@ -47,6 +72,9 @@ impl Code {
             Code::Ujis => "UJIS",
             Code::Sjis => "SJIS",
             Code::Jis => "JIS-NEW-ROMAJI",
+            Code::JisNewAscii => "JIS-NEW-ASCII",
+            Code::JisOldRomaji => "JIS-OLD-ROMAJI",
+            Code::JisOldAscii => "JIS-OLD-ASCII",
         }
     }
 
@@ -65,7 +93,14 @@ impl Code {
         } else if upper.contains("UJIS") || upper.contains("EUC") {
             Code::Ujis
         } else if upper.contains("JIS") {
-            Code::Jis
+            let old = upper.contains("OLD");
+            let ascii = upper.contains("ASCII");
+            match (old, ascii) {
+                (false, false) => Code::Jis,
+                (false, true) => Code::JisNewAscii,
+                (true, false) => Code::JisOldRomaji,
+                (true, true) => Code::JisOldAscii,
+            }
         } else {
             Code::Utf8
         };
@@ -76,9 +111,17 @@ impl Code {
     pub fn detect(bytes: &[u8]) -> Self {
         // ISO-2022-JP は 7bit ASCII + エスケープ列だけなので、UTF-8 の妥当性
         // 判定を先に行うと必ず UTF-8 と誤判定される。エスケープ列を先に見る。
-        const JIS_ESC: [&[u8]; 4] = [b"\x1b$B", b"\x1b$@", b"\x1b(J", b"\x1b(I"];
+        const JIS_ESC: [&[u8]; 5] = [b"\x1b$B", b"\x1b$@", b"\x1b(J", b"\x1b(I", b"\x1b(B"];
         if bytes.windows(3).any(|w| JIS_ESC.contains(&w)) {
-            return Code::Jis;
+            let old = bytes.windows(3).any(|w| w == b"\x1b$@");
+            let romaji = bytes.windows(3).any(|w| w == b"\x1b(J" || w == b"\x1b(I");
+            let ascii = bytes.windows(3).any(|w| w == b"\x1b(B");
+            return match (old, romaji || !ascii) {
+                (false, false) => Code::JisNewAscii,
+                (false, true) => Code::Jis,
+                (true, false) => Code::JisOldAscii,
+                (true, true) => Code::JisOldRomaji,
+            };
         }
         if std::str::from_utf8(bytes).is_ok() {
             return Code::Utf8;
@@ -279,7 +322,44 @@ pub fn from_utf8(bytes: &[u8], code: Code) -> Vec<u8> {
         }
         i += clen;
     }
-    convert_lossless(result.as_bytes(), "UTF-8", code.iconv_name())
+    jis_escapes(
+        convert_lossless(result.as_bytes(), "UTF-8", code.iconv_name()),
+        code,
+    )
+}
+
+/// バイト列中のエスケープ序列を置換する (JIS 新旧切替用)。
+fn replace_escape(bytes: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
+    if from.is_empty() {
+        return bytes.to_vec();
+    }
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(from) {
+            out.extend_from_slice(to);
+            i += from.len();
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// iconv の ISO-2022-JP が出す既定のエスケープを、選択された
+/// 新旧 JIS / ローマ字・ASCII モードへ書き換える。
+fn jis_escapes(mut bytes: Vec<u8>, code: Code) -> Vec<u8> {
+    if !code.is_jis() {
+        return bytes;
+    }
+    if code.jis_old() {
+        bytes = replace_escape(&bytes, b"\x1b$B", b"\x1b$@");
+    }
+    if code.jis_romaji() {
+        bytes = replace_escape(&bytes, b"\x1b(B", b"\x1b(J");
+    }
+    bytes
 }
 
 /// `from_utf8()` のエスケープを元の Unicode 文字へ戻す。
@@ -349,6 +429,42 @@ mod tests {
         assert!(jis.contains(&0x1b));
         assert_eq!(to_utf8(&jis, Code::Jis), "日本語".as_bytes());
         assert!(!sjis.is_empty());
+    }
+
+    #[test]
+    fn jis_new_old_and_ascii_romaji_variants() {
+        let src = "日本語 ABC".as_bytes();
+        let cases: [(Code, &[u8], &[u8]); 4] = [
+            (Code::Jis, b"\x1b$B", b"\x1b(J"),
+            (Code::JisNewAscii, b"\x1b$B", b"\x1b(B"),
+            (Code::JisOldRomaji, b"\x1b$@", b"\x1b(J"),
+            (Code::JisOldAscii, b"\x1b$@", b"\x1b(B"),
+        ];
+        for (code, kanji_esc, ascii_esc) in cases {
+            let enc = from_utf8(src, code);
+            assert!(
+                enc.windows(3).any(|w| w == kanji_esc),
+                "{:?}: {:?}",
+                code,
+                enc
+            );
+            assert!(
+                enc.windows(3).any(|w| w == ascii_esc),
+                "{:?}: {:?}",
+                code,
+                enc
+            );
+            assert_eq!(to_utf8(&enc, code), src, "code={:?}", code);
+            assert_eq!(Code::parse(code.as_str()).0, code);
+        }
+        assert_eq!(
+            Code::detect(&from_utf8(src, Code::JisOldRomaji)),
+            Code::JisOldRomaji
+        );
+        assert_eq!(
+            Code::detect(&from_utf8(src, Code::JisNewAscii)),
+            Code::JisNewAscii
+        );
     }
 
     #[test]

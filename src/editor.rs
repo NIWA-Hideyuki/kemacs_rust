@@ -26,6 +26,12 @@ pub trait EditorIo {
     fn prompt_accept_esc(&mut self, prompt: &str, default: Option<&str>) -> Option<String> {
         self.prompt(prompt, default)
     }
+    /// 候補補完付きのプロンプト (M-X のコマンド名入力)。
+    /// 既定実装は単純プロンプトへ委譲する。
+    fn prompt_completion(&mut self, prompt: &str, candidates: &[String]) -> Option<String> {
+        let _ = candidates;
+        self.prompt(prompt, None)
+    }
     /// 指定時間だけ待ってキーを読む。無ければ None。
     /// プレビュー出力を待つ間も描画を更新するために使う。
     fn read_key_timeout(&mut self, _timeout: std::time::Duration) -> Option<Ckey> {
@@ -113,6 +119,21 @@ impl IfFrame {
     }
 }
 
+/// 起動オプションのうち raw mode に入った後に実行するもの。
+/// プロンプトを含む操作は端末が raw mode でないと衝突するため、
+/// `input::run()` の直前にまとめて実行する。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StartupAction {
+    /// `-s<pattern>`: 起動後にパターンを検索する (プロンプトなし)。
+    Search(String),
+    /// `-s` 単体: raw mode に入ってから検索語を尋ねる。
+    PromptSearch,
+    /// `-k<key>`: 暗号キーを設定する (C 版 ekey 相当)。
+    CryptKey(String),
+    /// `-k` 単体: raw mode に入ってからキーを尋ねる。
+    PromptCryptKey,
+}
+
 pub struct Editor {
     pub buffers: Vec<Buffer>,
     pub windows: Vec<Window>,
@@ -170,6 +191,15 @@ pub struct Editor {
     pub script_interactive: bool,
     /// 現在のプロンプト入れ子深さ (デバッグ/再帰制御用)。
     pub prompt_depth: usize,
+    /// 再帰編集 / マクロ実行の深さ (C 版 reclevel)。
+    /// モードラインの `%<` / `%>` はこの値 - 1 個の文字を表示する。
+    pub reclevel: i32,
+    /// `-r` / `-R` で有効になる制限モード。
+    pub restricted: bool,
+    /// `auto-mode-for-file` で登録した (正規表現, モードビット)。
+    pub auto_mode_patterns: Vec<(crate::regex::Regex, u32)>,
+    /// raw mode 開始後に実行する起動オプション。
+    pub startup_actions: Vec<StartupAction>,
     /// dobuf / execproc の再帰深さ (スタック枯渇防止)。
     pub script_depth: usize,
     pub golabel: Option<String>,
@@ -270,6 +300,10 @@ impl Editor {
             if_stack: Vec::new(),
             script_interactive: false,
             prompt_depth: 0,
+            reclevel: 0,
+            restricted: false,
+            auto_mode_patterns: Vec::new(),
+            startup_actions: Vec::new(),
             script_depth: 0,
             golabel: None,
             in_macro_play: false,
@@ -479,6 +513,18 @@ impl Editor {
         answer
     }
 
+    /// 補完付きプロンプト。スクリプト中は macro_args から値を取る。
+    pub fn prompt_completion(&mut self, prompt: &str, candidates: &[String]) -> Option<String> {
+        self.prompt_depth += 1;
+        let answer = if let Some(a) = self.macro_args.pop_front() {
+            Some(a)
+        } else {
+            self.io.prompt_completion(prompt, candidates)
+        };
+        self.prompt_depth -= 1;
+        answer
+    }
+
     /// パスワード入力。端末では文字をエコーしない。
     pub fn prompt_secret(&mut self, prompt: &str) -> Option<String> {
         self.prompt_depth += 1;
@@ -489,6 +535,55 @@ impl Editor {
         };
         self.prompt_depth -= 1;
         answer
+    }
+
+    /// `-k<key>` 相当の暗号キーを全バッファへ設定し、読み込み済みファイルを
+    /// そのキーで再復号する (C 版は readin() の前に cryptstr() を準備する)。
+    fn apply_crypt_key(&mut self, key: &str) {
+        for b in &mut self.buffers {
+            let orig = b.original_bytes.clone();
+            let (code, eol) = (b.code, b.eol);
+            b.set_key(key.as_bytes());
+            if let Some(bytes) = orig {
+                b.load_encoded(&bytes, code, eol);
+            }
+        }
+    }
+
+    /// 起動オプションのうちプロンプトを伴うものを raw mode 開始後に実行する。
+    pub fn run_startup_actions(&mut self) {
+        let actions = std::mem::take(&mut self.startup_actions);
+        for action in actions {
+            match action {
+                StartupAction::Search(pat) => {
+                    let bytes = pat.into_bytes();
+                    self.search_pattern = bytes.clone();
+                    self.search_reverse = false;
+                    let dir = crate::search::Direction::Forward;
+                    let exact = self.buffer().mode & crate::buffer::MDEXACT != 0;
+                    let magic = self.buffer().mode & crate::buffer::MDMAGIC != 0;
+                    let start = self.buffer().dot;
+                    let b = self.buffer();
+                    match crate::search::find_mode(&b.lines, start, &bytes, dir, exact, magic) {
+                        Some((m, e)) => {
+                            self.buffer_mut().mark = Some(m);
+                            self.buffer_mut().dot = e;
+                        }
+                        None => self.mlwrite("[Search failed]"),
+                    }
+                }
+                StartupAction::PromptSearch => {
+                    let _ = self.execute_named("forwsearch", false, 1);
+                }
+                StartupAction::CryptKey(key) => self.apply_crypt_key(&key),
+                StartupAction::PromptCryptKey => {
+                    let Some(key) = self.prompt_secret("Encryption String: ") else {
+                        continue;
+                    };
+                    self.apply_crypt_key(&key);
+                }
+            }
+        }
     }
 
     /// 現在の !if ネストが実行可能か。
@@ -749,5 +844,35 @@ mod editor_tests {
         e.clear_message();
         assert!(e.message.is_empty());
         assert!(!e.mpresf);
+    }
+
+    #[test]
+    fn startup_search_runs_after_raw_mode() {
+        let mut e = Editor::new(Box::new(crate::input::ScriptedIo::new()), 24, 80);
+        e.buffer_mut().insert_bytes(b"alpha beta gamma");
+        e.buffer_mut().goto_bob();
+        e.startup_actions
+            .push(StartupAction::Search("beta".to_string()));
+        e.run_startup_actions();
+        assert_eq!(e.buffer().dot, crate::buffer::Pos::new(0, 10));
+        assert_eq!(e.buffer().mark, Some(crate::buffer::Pos::new(0, 6)));
+        assert!(e.startup_actions.is_empty());
+    }
+
+    #[test]
+    fn startup_crypt_key_applies_to_loaded_buffers() {
+        use crate::crypt::{Cipher, CryptKind};
+        let mut e = Editor::new(Box::new(crate::input::ScriptedIo::new()), 24, 80);
+        let plain = b"secret text".to_vec();
+        let mut enc = plain.clone();
+        let key = Cipher::prepare_key(b"pass");
+        Cipher::from_key(&key).crypt(&mut enc);
+        e.buffer_mut()
+            .load_encoded(&enc, Code::Utf8, crate::encoding::Eol::Lf);
+        e.startup_actions
+            .push(StartupAction::CryptKey("pass".to_string()));
+        e.run_startup_actions();
+        assert_eq!(e.buffer().crypt, CryptKind::Classic);
+        assert_eq!(e.buffer().text(), plain);
     }
 }

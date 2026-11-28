@@ -1,8 +1,45 @@
 //! 画面表示。C 版 `display.C_` の vtputc/update に相当する簡易フレーム生成。
 //! 実際の端末制御は `input.rs` が ANSI / crossterm で行う。
 
-use crate::buffer::{BFCHG, MDMDMOD, MDVIEW};
+use crate::buffer::{BFCHG, MDBINARY, MDMDMOD, MDVIEW};
 use crate::editor::{ColorSpec, Editor};
+
+use std::ffi::c_char;
+use std::os::raw::{c_int, c_long};
+
+#[repr(C)]
+struct Tm {
+    tm_sec: c_int,
+    tm_min: c_int,
+    tm_hour: c_int,
+    tm_mday: c_int,
+    tm_mon: c_int,
+    tm_year: c_int,
+    tm_wday: c_int,
+    tm_yday: c_int,
+    tm_isdst: c_int,
+    tm_gmtoff: c_long,
+    tm_zone: *const c_char,
+}
+
+extern "C" {
+    fn time(tloc: *mut i64) -> i64;
+    fn localtime_r(timer: *const i64, result: *mut Tm) -> *mut Tm;
+}
+
+/// C 版 `getclock()` と同じくローカル時刻の `HH:MM`。
+/// libc の localtime_r() を使い、TZ / /etc/localtime を尊重する。
+fn local_hhmm() -> String {
+    let secs = unsafe { time(std::ptr::null_mut()) };
+    let mut tm: Tm = unsafe { std::mem::zeroed() };
+    if !unsafe { localtime_r(&secs, &mut tm) }.is_null() {
+        format!("{:02}:{:02}", tm.tm_hour, tm.tm_min)
+    } else {
+        // 失敗時は従来どおり UTC へフォールバックする。
+        let s = secs.rem_euclid(86_400);
+        format!("{:02}:{:02}", s / 3600, (s / 60) % 60)
+    }
+}
 
 /// バイト列の先頭から `tabsize` を考慮した表示桁数を返す。
 pub fn column_of(bytes: &[u8], tabsize: usize) -> usize {
@@ -226,6 +263,10 @@ fn truncate_width(s: &str, max: usize) -> String {
 
 /// C 版 `code_string()` 相当 (LF のときは改行種別を省略)。
 fn code_string(b: &crate::buffer::Buffer) -> String {
+    // C 版と同じく BINARY モードではコード名を表示しない。
+    if b.mode & MDBINARY != 0 {
+        return String::new();
+    }
     let prefix = match b.eol {
         crate::encoding::Eol::Lf => "",
         crate::encoding::Eol::Cr => "CR/",
@@ -286,16 +327,11 @@ fn expand_modeline(ed: &Editor) -> String {
             }
             'c' | 'C' => code_string(b),
             'l' => (b.dot.line + 1).to_string(),
-            't' | 'T' => {
-                use std::time::{SystemTime, UNIX_EPOCH};
-                let secs = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                format!("{:02}:{:02}", (secs / 3600) % 24, (secs / 60) % 60)
-            }
+            't' | 'T' => local_hhmm(),
             '<' | '>' => {
-                let n = ed.prompt_depth.saturating_sub(1).min(64);
+                // C 版 reclevel と同じく、再帰の外側では 0 文字、
+                // 1 段下がるごとに 1 文字増える (最大 64)。
+                let n = (ed.reclevel.saturating_sub(1) as usize).min(64);
                 c.to_string().repeat(n)
             }
             '%' => "%".to_string(),
@@ -475,6 +511,53 @@ pub fn needs_full_redraw(prev: Option<&Frame>, cur: &Frame) -> bool {
                 || p.bg != cur.bg
                 || p.color_on != cur.color_on
         }
+    }
+}
+
+#[cfg(test)]
+mod modeline_extra_tests {
+    use super::*;
+    use crate::input::ScriptedIo;
+
+    fn ed() -> Editor {
+        Editor::new(Box::new(ScriptedIo::new()), 24, 80)
+    }
+
+    #[test]
+    fn modeline_time_is_local_hhmm() {
+        let t = local_hhmm();
+        let (h, m) = t.split_once(':').expect("HH:MM");
+        assert_eq!(h.len(), 2);
+        assert_eq!(m.len(), 2);
+        assert!(h.parse::<u32>().unwrap() < 24);
+        assert!(m.parse::<u32>().unwrap() < 60);
+        let mut e = ed();
+        e.mode_line_format = "%t".to_string();
+        assert_eq!(expand_modeline(&e), t);
+    }
+
+    #[test]
+    fn modeline_angle_brackets_follow_reclevel() {
+        let mut e = ed();
+        e.mode_line_format = "%<-%>".to_string();
+        // C 版同様、外側 (reclevel=1) では何も出さない。
+        e.reclevel = 1;
+        assert_eq!(expand_modeline(&e), "-");
+        e.reclevel = 3;
+        assert_eq!(expand_modeline(&e), "<<->>");
+        e.reclevel = 100;
+        e.screen_cols = 200;
+        assert_eq!(
+            expand_modeline(&e),
+            format!("{}-{}", "<".repeat(64), ">".repeat(64))
+        );
+    }
+
+    #[test]
+    fn modeline_code_is_empty_in_binary_mode() {
+        let mut e = ed();
+        e.buffer_mut().mode |= MDBINARY;
+        assert_eq!(code_string(e.buffer()), "");
     }
 }
 

@@ -3,7 +3,7 @@
 use std::io::{self, Write};
 
 use kemacs::buffer::{MDBINARY, MDVIEW};
-use kemacs::editor::Editor;
+use kemacs::editor::{Editor, StartupAction};
 use kemacs::encoding::{Code, Eol};
 use kemacs::input::{self, TerminalIo};
 use kemacs::script;
@@ -15,14 +15,15 @@ fn print_usage(prog: &str) {
     );
     eprintln!("  -v, -V          VIEW モード (読み取り専用)");
     eprintln!("  -e, -E          EDIT モード (既定)");
-    eprintln!("  -b              BINARY モード (フラグのみ。変換は停止しない)");
+    eprintln!("  -b              BINARY モード (文字コード変換を停止)");
     eprintln!("  -g<line>        起動時に指定行へ移動");
     eprintln!("  -x<command>     起動時にコマンドを実行");
     eprintln!("  -f<code>        新規ファイルの文字コード (-fUTF8 等)");
     eprintln!("  -t<code>        端末文字コード (-tUTF8 等。$bcode の別名)");
-    eprintln!("  -r, -R          制限モード (フラグのみ)");
+    eprintln!("  -r, -R          制限モード (ファイル操作・シェル実行を禁止)");
+    eprintln!("  -s[<pattern>]   起動時に検索 (raw mode 開始後に実行)");
+    eprintln!("  -k[<key>]       暗号キーを設定 (raw mode 開始後に実行)");
     eprintln!("  @file           スタートアップマクロを実行");
-    eprintln!("  未移植: -s<pattern>, -k<key>");
     eprintln!("  Rust port of kemacs (core command set).");
 }
 
@@ -91,14 +92,41 @@ fn main() {
             i += 1;
             continue;
         }
-        if arg == "-b" {
+        if arg == "-b" || arg == "-B" {
             binary_mode = true;
             i += 1;
             continue;
         }
         if arg == "-r" || arg == "-R" {
-            // 制限モードはフラグのみ (変換・コマンド制限は未実装)
+            ed.restricted = true;
             i += 1;
+            continue;
+        }
+        // -s / -k はプロンプトを伴うため、raw mode 開始後に実行する。
+        for (prefix, action) in [
+            ("-s", StartupAction::PromptSearch),
+            ("-k", StartupAction::PromptCryptKey),
+        ] {
+            if let Some(v) = arg.strip_prefix(prefix) {
+                let v = if v.is_empty() && i + 1 < args.len() && !args[i + 1].starts_with('-') {
+                    i += 1;
+                    args[i].clone()
+                } else {
+                    v.to_string()
+                };
+                let act = if v.is_empty() {
+                    action
+                } else if prefix == "-s" {
+                    StartupAction::Search(v)
+                } else {
+                    StartupAction::CryptKey(v)
+                };
+                ed.startup_actions.push(act);
+                i += 1;
+                break;
+            }
+        }
+        if arg.starts_with("-s") || arg.starts_with("-k") {
             continue;
         }
         if let Some(v) = arg.strip_prefix("-g") {
@@ -167,6 +195,10 @@ fn main() {
             let b = &mut ed.buffers[bi];
             b.name = name.clone();
             b.fname = Some(arg.clone());
+            // BINARY モードは読み込み前にも適用し、文字コード変換そのものを止める。
+            if binary_mode {
+                b.mode |= MDBINARY;
+            }
             b.load_encoded(&data, code, eol);
         }
         kemacs::modes::auto_mode(&mut ed, bi, &name);
@@ -206,6 +238,9 @@ fn main() {
         eprintln!("failed to enable raw mode: {}", e);
         std::process::exit(1);
     }
+    // -s / -k は端末が raw mode になってから処理する (C 版 main() の
+    // forwhunt() / cryptstr() に相当)。
+    ed.run_startup_actions();
     let result = input::run(&mut ed);
     let _ = input::disable();
     let _ = io::stdout().flush();

@@ -130,6 +130,26 @@ pub fn spawncli(ed: &mut Editor) -> Status {
     }
 }
 
+/// `^C` : 端末を raw mode から戻して一時的にシェルへ脱出する。
+/// C 版の ^C (shell escape) 相当。終了するとエディタへ戻る。
+pub fn shell_escape_shell(ed: &mut Editor) -> Status {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    ed.suspend_terminal();
+    let result = Command::new(&shell).status();
+    ed.resume_terminal();
+    ed.window_mut().flag = 0xff;
+    match result {
+        Ok(_) => {
+            ed.mlwrite("[End]");
+            Status::True
+        }
+        Err(e) => {
+            ed.mlwrite(format!("{}", e));
+            Status::False
+        }
+    }
+}
+
 /// C-X @ : コマンド出力を別ウィンドウのバッファへ入れる。
 pub fn pipecmd(ed: &mut Editor) -> Status {
     let Some(cmd) = ed.prompt("@", None) else {

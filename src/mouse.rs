@@ -26,6 +26,10 @@ const TAG_RELEASE: Ckey = 0x0400_0000;
 const TAG_RPRESS: Ckey = 0x0500_0000;
 const TAG_RDRAG: Ckey = 0x0600_0000;
 const TAG_RRELEASE: Ckey = 0x0700_0000;
+const TAG_MPRESS: Ckey = 0x0800_0000;
+const TAG_MRELEASE: Ckey = 0x0900_0000;
+const TAG_WLEFT: Ckey = 0x0A00_0000;
+const TAG_WRIGHT: Ckey = 0x0B00_0000;
 const TAG_MASK: Ckey = 0x0F00_0000;
 const COORD_SHIFT: u32 = 12;
 
@@ -33,12 +37,20 @@ const COORD_SHIFT: u32 = 12;
 pub enum MouseKind {
     WheelUp,
     WheelDown,
+    /// 横スクロール左 (1 ノッチ = 1 キー)。
+    WheelLeft,
+    /// 横スクロール右。
+    WheelRight,
     /// 左ボタン押下 (範囲選択の始点)。
     Press,
     /// 左ボタンのドラッグ。
     Drag,
     /// 左ボタン解放。
     Release,
+    /// 中ボタン押下 (クリップボードから貼り付け)。
+    MiddlePress,
+    /// 中ボタン解放。ここでカーソル位置へ貼り付ける。
+    MiddleRelease,
     /// 右ボタン押下。
     RightPress,
     /// 右ボタンのドラッグ (解放時にコピー)。
@@ -60,9 +72,13 @@ pub struct MouseEvent {
 pub const fn encode(kind: MouseKind, row: u16, col: u16) -> Ckey {
     let tag = match kind {
         MouseKind::WheelUp | MouseKind::WheelDown => TAG_WHEEL,
+        MouseKind::WheelLeft => TAG_WLEFT,
+        MouseKind::WheelRight => TAG_WRIGHT,
         MouseKind::Press => TAG_PRESS,
         MouseKind::Drag => TAG_DRAG,
         MouseKind::Release => TAG_RELEASE,
+        MouseKind::MiddlePress => TAG_MPRESS,
+        MouseKind::MiddleRelease => TAG_MRELEASE,
         MouseKind::RightPress => TAG_RPRESS,
         MouseKind::RightDrag => TAG_RDRAG,
         MouseKind::RightRelease => TAG_RRELEASE,
@@ -72,8 +88,19 @@ pub const fn encode(kind: MouseKind, row: u16, col: u16) -> Ckey {
     } else {
         0
     };
-    let (r, c) = if tag == TAG_WHEEL { (0, 0) } else { (row, col) };
+    let (r, c) = if is_wheel_kind(kind) {
+        (0, 0)
+    } else {
+        (row, col)
+    };
     MOUSEFLG | tag | (((r as Ckey) & 0xFFF) << COORD_SHIFT) | ((c as Ckey) & 0xFFF) | dir
+}
+
+const fn is_wheel_kind(kind: MouseKind) -> bool {
+    matches!(
+        kind,
+        MouseKind::WheelUp | MouseKind::WheelDown | MouseKind::WheelLeft | MouseKind::WheelRight
+    )
 }
 
 /// 疑似キーからマウスイベントへ復号する。MOUSEFLG が無ければ None。
@@ -89,9 +116,13 @@ pub fn decode(k: Ckey) -> Option<MouseEvent> {
                 MouseKind::WheelDown
             }
         }
+        TAG_WLEFT => MouseKind::WheelLeft,
+        TAG_WRIGHT => MouseKind::WheelRight,
         TAG_PRESS => MouseKind::Press,
         TAG_DRAG => MouseKind::Drag,
         TAG_RELEASE => MouseKind::Release,
+        TAG_MPRESS => MouseKind::MiddlePress,
+        TAG_MRELEASE => MouseKind::MiddleRelease,
         TAG_RPRESS => MouseKind::RightPress,
         TAG_RDRAG => MouseKind::RightDrag,
         TAG_RRELEASE => MouseKind::RightRelease,
@@ -106,18 +137,21 @@ pub fn decode(k: Ckey) -> Option<MouseEvent> {
     Some(MouseEvent { kind, row, col })
 }
 
-/// ホイールの疑似キーか。
+/// ホイール (上下左右) の疑似キーか。
 pub fn is_wheel(k: Ckey) -> bool {
-    is_mouse(k) && (k & TAG_MASK) == TAG_WHEEL
+    is_mouse(k) && matches!(k & TAG_MASK, TAG_WHEEL | TAG_WLEFT | TAG_WRIGHT)
 }
 
 /// マウスイベントをエディタへ適用する。
 pub fn handle(ed: &mut Editor, ev: MouseEvent) {
     match ev.kind {
         MouseKind::WheelUp | MouseKind::WheelDown => wheel(ed, ev.kind),
+        MouseKind::WheelLeft | MouseKind::WheelRight => wheel_horizontal(ed, ev.kind),
         MouseKind::Press => press(ed, ev.row, ev.col),
         MouseKind::Drag => drag(ed, ev.row, ev.col),
         MouseKind::Release => release(ed),
+        MouseKind::MiddlePress => middle_press(ed, ev.row, ev.col),
+        MouseKind::MiddleRelease => middle_release(ed, ev.row, ev.col),
         MouseKind::RightPress => right_press(ed, ev.row, ev.col),
         MouseKind::RightDrag => right_drag(ed, ev.row, ev.col),
         MouseKind::RightRelease => right_release(ed),
@@ -131,6 +165,43 @@ fn wheel(ed: &mut Editor, kind: MouseKind) {
         _ => "wheel-down",
     };
     let _ = ed.execute_named(name, false, lines);
+}
+
+/// 横スクロール: 縦ホイールと同じ回数だけ左右へ移動する。
+fn wheel_horizontal(ed: &mut Editor, kind: MouseKind) {
+    let cols = ed.wheel_lines.clamp(1, 50) as i32;
+    let name = if matches!(kind, MouseKind::WheelLeft) {
+        "backchar"
+    } else {
+        "forwchar"
+    };
+    let _ = ed.execute_named(name, false, cols);
+}
+
+/// 中ボタン押下: クリック位置へカーソルを移す (選択は作らない)。
+fn middle_press(ed: &mut Editor, row: u16, col: u16) {
+    if let Some(p) = pos_at(ed, row, col) {
+        ed.buffer_mut().dot = p;
+        ed.buffer_mut().mark = None;
+        ed.window_mut().flag = 0xff;
+    }
+}
+
+/// 中ボタン解放: クリップボードの内容をカーソル位置へ貼り付ける (X11 準拠)。
+fn middle_release(ed: &mut Editor, row: u16, col: u16) {
+    if let Some(p) = pos_at(ed, row, col) {
+        ed.buffer_mut().dot = p;
+        ed.buffer_mut().mark = None;
+    }
+    let text = crate::clipboard::paste();
+    if text.is_empty() {
+        ed.mlwrite("Clipboard is empty");
+        return;
+    }
+    let n = text.len();
+    if ed.insert_snippet(&text) {
+        ed.mlwrite(format!("[Pasted {} bytes]", n));
+    }
 }
 
 /// 左ボタン押下: カーソルを移動し、そこをマークにする。
@@ -313,6 +384,56 @@ mod tests {
 
     /// クリップボードはプロセス全体で共有されるため、扱うテストを直列化する。
     static CLIP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn horizontal_wheel_moves_cursor_by_wheel_lines() {
+        let mut e = ed();
+        e.buffer_mut().dot = Pos::new(0, 8);
+        handle(
+            &mut e,
+            MouseEvent {
+                kind: MouseKind::WheelRight,
+                row: 0,
+                col: 0,
+            },
+        );
+        assert_eq!(e.buffer().dot.off, 11);
+        handle(
+            &mut e,
+            MouseEvent {
+                kind: MouseKind::WheelLeft,
+                row: 0,
+                col: 0,
+            },
+        );
+        assert_eq!(e.buffer().dot.off, 8);
+    }
+
+    #[test]
+    fn middle_click_pastes_clipboard_at_click_position() {
+        let _guard = CLIP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::clipboard::copy(b"PASTE");
+        let mut e = ed();
+        handle(
+            &mut e,
+            MouseEvent {
+                kind: MouseKind::MiddlePress,
+                row: 0,
+                col: 3,
+            },
+        );
+        handle(
+            &mut e,
+            MouseEvent {
+                kind: MouseKind::MiddleRelease,
+                row: 0,
+                col: 3,
+            },
+        );
+        assert_eq!(e.buffer().mark, None);
+        let text = e.buffer().text();
+        assert_eq!(&text[..8], b"linPASTE");
+    }
 
     #[test]
     fn wheel_keys_carry_no_coordinates() {

@@ -317,8 +317,19 @@ impl Buffer {
             }
         }
         self.decrypt_failed = decrypt_failed;
-        let normalized = eol.decode(&raw);
-        let mut utf8 = encoding::to_utf8(&normalized, code);
+        // BINARY モードでは改行変換と文字コード変換をどちらも行わず、
+        // ファイルのバイト列をそのまま内部行へ分割する (C 版 MDBINARY)。
+        let binary = self.mode & MDBINARY != 0;
+        let normalized = if binary {
+            raw.clone()
+        } else {
+            eol.decode(&raw)
+        };
+        let mut utf8 = if binary {
+            normalized.clone()
+        } else {
+            encoding::to_utf8(&normalized, code)
+        };
         if self.crypt == CryptKind::Classic {
             if let Some(k) = self.key.clone() {
                 Cipher::from_key(&k).decrypt(&mut utf8);
@@ -346,6 +357,17 @@ impl Buffer {
             if let Some(orig) = &self.original_bytes {
                 return orig.clone();
             }
+        }
+        // BINARY モードでは from_utf8() / EOL 変換を通さず、内部バイト列を
+        // そのまま書き出す (C 版 KS_BINARY の thru 動作)。
+        if self.mode & MDBINARY != 0 {
+            let mut out = cur;
+            if self.crypt == CryptKind::Classic {
+                if let Some(k) = self.key.clone() {
+                    Cipher::from_key(&k).crypt(&mut out);
+                }
+            }
+            return out;
         }
         let mut converted = encoding::from_utf8(&cur, self.code);
         if self.crypt == CryptKind::Classic {
@@ -1002,6 +1024,24 @@ mod tests {
         b.insert_bytes(b"x");
         assert_ne!(b.flags & BFCHG, 0);
         assert_eq!(b.flags & BFINVS, 0);
+    }
+
+    #[test]
+    fn binary_mode_skips_encoding_and_eol_conversion() {
+        // SJIS + CRLF のバイト列を BINARY モードで読むと、そのまま保持される。
+        let raw = b"\x82\xa0\x82\xa2\r\nABC\r\n";
+        let mut b = Buffer::new("bin");
+        b.mode |= MDBINARY;
+        b.load_encoded(raw, Code::Sjis, Eol::Crlf);
+        assert_eq!(b.text(), raw);
+        assert_eq!(b.encoded_text(), raw.to_vec());
+        // 編集しても文字コード / 改行の変換は行われない。
+        b.goto_eob();
+        b.insert_bytes(b"X");
+        let out = b.encoded_text();
+        let mut expected = raw.to_vec();
+        expected.push(b'X');
+        assert_eq!(out, expected);
     }
 
     #[test]

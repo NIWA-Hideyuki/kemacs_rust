@@ -229,14 +229,22 @@ pub fn map_key(code: KeyCode, modifiers: KeyModifiers) -> Ckey {
 
 /// crossterm のマウスイベントを疑似キーへ変換する。
 ///
-/// 使うのはホイール (上下)、左ボタンの押下 / ドラッグ / 解放、
-/// 右ボタンの押下 / ドラッグ / 解放。中ボタン、単独の移動、横スクロールは
-/// エディタ機能に含めないため None。
+/// 使うのはホイール (上下左右)、左・中・右ボタンの押下 / ドラッグ / 解放。
+/// 中ボタンはクリックでクリップボードを貼り付け、横ホイールは左右移動に使う。
+/// 単独の移動イベントは捨てる。
 pub fn map_mouse(kind: MouseEventKind, column: u16, row: u16) -> Option<Ckey> {
     use crate::mouse::{encode, MouseKind};
     match kind {
         MouseEventKind::ScrollUp => Some(encode(MouseKind::WheelUp, 0, 0)),
         MouseEventKind::ScrollDown => Some(encode(MouseKind::WheelDown, 0, 0)),
+        MouseEventKind::ScrollLeft => Some(encode(MouseKind::WheelLeft, 0, 0)),
+        MouseEventKind::ScrollRight => Some(encode(MouseKind::WheelRight, 0, 0)),
+        MouseEventKind::Down(MouseButton::Middle) => {
+            Some(encode(MouseKind::MiddlePress, row, column))
+        }
+        MouseEventKind::Up(MouseButton::Middle) => {
+            Some(encode(MouseKind::MiddleRelease, row, column))
+        }
         MouseEventKind::Down(MouseButton::Left) => Some(encode(MouseKind::Press, row, column)),
         MouseEventKind::Drag(MouseButton::Left) => Some(encode(MouseKind::Drag, row, column)),
         MouseEventKind::Up(MouseButton::Left) => Some(encode(MouseKind::Release, row, column)),
@@ -251,6 +259,26 @@ pub fn map_mouse(kind: MouseEventKind, column: u16, row: u16) -> Option<Ckey> {
     }
 }
 
+/// 候補文字列の最長共通事前部分列 (M-X 補完用)。
+fn longest_common_prefix<'a>(items: &[&'a String]) -> &'a str {
+    let Some(first) = items.first() else {
+        return "";
+    };
+    let mut end = first.len();
+    for item in items.iter().skip(1) {
+        let bytes = item.as_bytes();
+        let mut i = 0;
+        while i < end && i < bytes.len() && first.as_bytes()[i] == bytes[i] {
+            i += 1;
+        }
+        end = i;
+        if end == 0 {
+            break;
+        }
+    }
+    &first[..end]
+}
+
 impl EditorIo for TerminalIo {
     fn prompt(&mut self, prompt: &str, default: Option<&str>) -> Option<String> {
         self.prompt_inner(prompt, default, false)
@@ -258,6 +286,83 @@ impl EditorIo for TerminalIo {
 
     fn prompt_accept_esc(&mut self, prompt: &str, default: Option<&str>) -> Option<String> {
         self.prompt_inner(prompt, default, true)
+    }
+
+    /// M-X 用の補完プロンプト。TAB / SPACE で候補を補完し、
+    /// 候補が複数残る場合は共通部分だけを埋めて一覧を表示する。
+    fn prompt_completion(&mut self, prompt: &str, candidates: &[String]) -> Option<String> {
+        let mut buf = String::new();
+        let mut out = io::stdout();
+        let _ = crossterm::execute!(out, Show);
+        let last_row = terminal::size().map_or(24, |(_, r)| r).saturating_sub(1);
+        loop {
+            let _ = crossterm::queue!(
+                out,
+                MoveTo(0, last_row as u16),
+                Print(format!("{}{}", prompt, buf)),
+                Clear(ClearType::UntilNewLine)
+            );
+            let _ = out.flush();
+            let k = self.next_key();
+            if crate::keycode::is_mouse(k) {
+                continue;
+            }
+            if k == PASTE_KEY {
+                if let Some(text) = self.pop_paste() {
+                    buf.push_str(&String::from_utf8_lossy(&text));
+                }
+                continue;
+            }
+            if k == ctl(b'G') {
+                return None;
+            }
+            if k == ctl(b'M') || k == b'\r' as Ckey || k == b'\n' as Ckey {
+                break;
+            }
+            if k == ctl(b'H') || k == 8 || k == 127 {
+                buf.pop();
+                continue;
+            }
+            if k == ctl(b'I') || k == b' ' as Ckey {
+                let matches: Vec<&String> =
+                    candidates.iter().filter(|c| c.starts_with(&buf)).collect();
+                if !matches.is_empty() {
+                    let common = longest_common_prefix(&matches).to_string();
+                    let progressed = common.len() > buf.len();
+                    if progressed {
+                        buf = common.clone();
+                    }
+                    if matches.len() == 1 {
+                        buf = matches[0].clone();
+                    } else if !progressed || common.len() == buf.len() {
+                        // それ以上詰められないなら候補を一行に並べて見せる。
+                        let list = matches
+                            .iter()
+                            .map(|s| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        let width = terminal::size()
+                            .map_or(80, |(c, _)| c as usize)
+                            .saturating_sub(1);
+                        let short: String = list.chars().take(width).collect();
+                        let _ = crossterm::queue!(
+                            out,
+                            MoveTo(0, last_row.saturating_sub(1) as u16),
+                            Print(short),
+                            Clear(ClearType::UntilNewLine)
+                        );
+                    }
+                }
+                continue;
+            }
+            let c = code(k);
+            if c >= 0x20 {
+                if let Some(ch) = char::from_u32(c as u32) {
+                    buf.push(ch);
+                }
+            }
+        }
+        Some(buf)
     }
 
     fn prompt_secret(&mut self, prompt: &str) -> Option<String> {
@@ -523,6 +628,14 @@ pub fn apply_resize(ed: &mut Editor, rows: usize, cols: usize) {
 
 /// 編集ループ: 入力を読み、プレフィックスを処理し、描画する。
 pub fn run(ed: &mut Editor) -> io::Result<()> {
+    // C 版 recedit() と同じく、編集ループに入った時点で再帰レベルを 1 上げる。
+    ed.reclevel += 1;
+    let result = run_inner(ed);
+    ed.reclevel -= 1;
+    result
+}
+
+fn run_inner(ed: &mut Editor) -> io::Result<()> {
     let mut prev: Option<Frame> = None;
     while !ed.quit {
         if RESIZE_PENDING.swap(false, Ordering::Relaxed) {
@@ -638,6 +751,19 @@ mod tests {
     }
 
     #[test]
+    fn completion_common_prefix() {
+        let names: Vec<String> = ["filefind", "filesave", "fileread"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let refs: Vec<&String> = names.iter().collect();
+        assert_eq!(longest_common_prefix(&refs), "file");
+        let names: Vec<String> = vec!["one".into(), "two".into()];
+        let refs: Vec<&String> = names.iter().collect();
+        assert_eq!(longest_common_prefix(&refs), "");
+    }
+
+    #[test]
     fn mouse_events_map_to_pseudo_keys() {
         assert_eq!(map_mouse(MouseEventKind::ScrollUp, 3, 4), Some(WHEELUP));
         assert_eq!(map_mouse(MouseEventKind::ScrollDown, 3, 4), Some(WHEELDOWN));
@@ -645,14 +771,34 @@ mod tests {
         let ev = crate::mouse::decode(press).unwrap();
         assert_eq!(ev.kind, crate::mouse::MouseKind::Press);
         assert_eq!((ev.row, ev.col), (2, 7));
-        // 中ボタン、単独移動、横スクロールは機能に含めない。
-        assert_eq!(
-            map_mouse(MouseEventKind::Down(MouseButton::Middle), 0, 0),
-            None
-        );
+        // 中ボタンと横スクロールも疑似キーへ変換する。単独移動だけ捨てる。
+        for (kind, expected, coords) in [
+            (
+                MouseEventKind::Down(MouseButton::Middle),
+                crate::mouse::MouseKind::MiddlePress,
+                (5, 4),
+            ),
+            (
+                MouseEventKind::Up(MouseButton::Middle),
+                crate::mouse::MouseKind::MiddleRelease,
+                (5, 4),
+            ),
+            (
+                MouseEventKind::ScrollLeft,
+                crate::mouse::MouseKind::WheelLeft,
+                (0, 0),
+            ),
+            (
+                MouseEventKind::ScrollRight,
+                crate::mouse::MouseKind::WheelRight,
+                (0, 0),
+            ),
+        ] {
+            let ev = crate::mouse::decode(map_mouse(kind, 4, 5).unwrap()).unwrap();
+            assert_eq!(ev.kind, expected);
+            assert_eq!((ev.row, ev.col), coords);
+        }
         assert_eq!(map_mouse(MouseEventKind::Moved, 1, 1), None);
-        assert_eq!(map_mouse(MouseEventKind::ScrollLeft, 1, 1), None);
-        assert_eq!(map_mouse(MouseEventKind::ScrollRight, 1, 1), None);
         // 右ボタンはコピー/ペースト用に使う。
         for kind in [
             MouseEventKind::Down(MouseButton::Right),

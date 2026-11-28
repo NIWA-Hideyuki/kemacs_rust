@@ -245,8 +245,12 @@ pub fn eval_token(ed: &mut Editor, tok: &str) -> String {
             .collect();
         return eval_func(ed, &fname.to_ascii_lowercase(), &args);
     }
-    if t.starts_with('@') {
-        return "1".to_string();
+    if let Some(rest) = t.strip_prefix('@') {
+        // C 版 TKARG: `@` に続くトークンをプロンプト文字列として評価し、
+        // 参照のたびにユーザーへ入力を求める。スクリプト中は macro_args
+        // から値を取るため、対話でなくても同じ構文が使える。
+        let prompt = eval_token(ed, rest);
+        return ed.prompt(&prompt, None).unwrap_or_default();
     }
     if t.starts_with('*') {
         return "0".to_string();
@@ -527,6 +531,7 @@ pub fn dobuf(ed: &mut Editor, bufname: &str) -> Status {
         return Status::False;
     }
     ed.script_depth += 1;
+    ed.reclevel += 1;
     let lines = ed.buffers[bi].lines.clone();
     let mut i = 0usize;
     let saved_stack = std::mem::take(&mut ed.if_stack);
@@ -560,6 +565,7 @@ pub fn dobuf(ed: &mut Editor, bufname: &str) -> Status {
     };
     let st = result;
     ed.script_depth -= 1;
+    ed.reclevel -= 1;
     ed.if_stack = saved_stack;
     ed.execlevel = saved_execlevel;
     st
@@ -634,6 +640,7 @@ pub fn play_macro(ed: &mut Editor, rep: i32) -> Status {
     }
     let keys = ed.kbdm.clone();
     ed.in_macro_play = true;
+    ed.reclevel += 1;
     let mut ok = true;
     for _ in 0..rep {
         for &(k, f, n) in &keys {
@@ -648,6 +655,7 @@ pub fn play_macro(ed: &mut Editor, rep: i32) -> Status {
         }
     }
     ed.in_macro_play = false;
+    ed.reclevel -= 1;
     Status::from_ok(ok)
 }
 
@@ -663,6 +671,20 @@ mod tests {
             tokenize("  &add 1 ~n2 \"a b\""),
             vec!["&add", "1", "\n2", "a b"]
         );
+    }
+
+    #[test]
+    fn interactive_variable_prompts_on_reference() {
+        let mut e = Editor::new(
+            Box::new(ScriptedIo::with_prompts(&["world", "again"])),
+            24,
+            80,
+        );
+        assert_eq!(eval_token(&mut e, "@Who: "), "world");
+        assert_eq!(eval_token(&mut e, "@Who: "), "again");
+        // スクリプト中は macro_args から値を取るためプロンプトを消費しない。
+        e.macro_args = VecDeque::from(vec!["scripted".to_string()]);
+        assert_eq!(eval_token(&mut e, "@Who: "), "scripted");
     }
 
     #[test]
